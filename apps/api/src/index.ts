@@ -194,6 +194,7 @@ const SESSION_TOKEN_BYTES = 32;
 const DEFAULT_SESSION_TTL_DAYS = 30;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const MAX_IMAGE_UPLOAD_BYTES = 50 * 1024 * 1024;
+const MAX_ATTACHMENT_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_COMPRESSED_IMAGE_EDGE = 2560;
 const IMAGE_COMPRESSION_QUALITY = 82;
 const COMPRESSED_IMAGE_MIME_TYPE = "image/webp";
@@ -938,17 +939,26 @@ app.post("/api/v1/memos/:id/resources", async (c) => {
 
   const actor = getAuditActor(c);
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const mimeType = file.type || "application/octet-stream";
   let resource: Resource;
 
   try {
-    resource = await createImageResource(c, {
-      memoId,
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      bytes,
-      actor,
-      source: "upload",
-    });
+    resource = SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)
+      ? await createImageResource(c, {
+          memoId,
+          filename: file.name,
+          mimeType,
+          bytes,
+          actor,
+          source: "upload",
+        })
+      : await createAttachmentResource(c, {
+          memoId,
+          filename: file.name,
+          mimeType,
+          bytes,
+          actor,
+        });
   } catch (error) {
     if (error instanceof AppError) {
       return apiError(c, error.code, error.message, error.status);
@@ -1041,6 +1051,77 @@ const createImageResource = async (
   return mapResource(resource);
 };
 
+const createAttachmentResource = async (
+  c: AppContext,
+  input: {
+    memoId: string;
+    filename: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    actor: AuditActor;
+  }
+) => {
+  validateAttachmentUpload(input.bytes.byteLength);
+
+  const resourceId = createId("res");
+  const now = isoNow();
+  const filename = normalizeFilename(input.filename) || resourceId;
+  const objectKey = `memos/${input.memoId}/${resourceId}`;
+  const bucketName = c.env.EDGE_EVER_R2_BUCKET_NAME?.trim() || DEFAULT_R2_BUCKET_NAME;
+  const checksum = await sha256Bytes(input.bytes);
+
+  await c.env.RESOURCES.put(objectKey, input.bytes, {
+    httpMetadata: {
+      contentType: input.mimeType,
+      cacheControl: "private, max-age=3600",
+    },
+    customMetadata: {
+      memoId: input.memoId,
+      resourceId,
+      filename,
+    },
+  });
+
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO resources (
+          id, memo_id, bucket_name, object_key, kind, mime_type, filename,
+          byte_size, sha256, width, height, metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'attachment', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`
+      ).bind(
+        resourceId,
+        input.memoId,
+        bucketName,
+        objectKey,
+        input.mimeType,
+        filename,
+        input.bytes.byteLength,
+        checksum,
+        JSON.stringify({ originalFilename: filename }),
+        now,
+        now
+      ),
+      auditStatement(c.env.DB, input.actor.actorType, input.actor.actorId, "resource.create", "resource", resourceId, {
+        memoId: input.memoId,
+        mimeType: input.mimeType,
+        byteSize: input.bytes.byteLength,
+      }),
+    ]);
+  } catch (error) {
+    await c.env.RESOURCES.delete(objectKey);
+    throw error;
+  }
+
+  const resource = await getResourceRow(c.env.DB, resourceId);
+
+  if (!resource) {
+    throw new AppError("not_found", "Resource not found", 404);
+  }
+
+  return mapResource(resource);
+};
+
 const validateImageUpload = (mimeType: string, size: number) => {
   if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
     throw new AppError("unsupported_media_type", "Only PNG, JPEG, GIF, WebP and AVIF images are supported.", 415);
@@ -1048,6 +1129,12 @@ const validateImageUpload = (mimeType: string, size: number) => {
 
   if (size <= 0 || size > MAX_IMAGE_UPLOAD_BYTES) {
     throw new AppError("upload_too_large", "Image must be between 1 byte and 50 MB.", 413);
+  }
+};
+
+const validateAttachmentUpload = (size: number) => {
+  if (size <= 0 || size > MAX_ATTACHMENT_UPLOAD_BYTES) {
+    throw new AppError("upload_too_large", "Attachment must be between 1 byte and 50 MB.", 413);
   }
 };
 

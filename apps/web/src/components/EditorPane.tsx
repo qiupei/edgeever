@@ -15,6 +15,7 @@ import {
   Save,
   ReplaceAll,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Sparkles,
   Search,
@@ -283,6 +284,7 @@ export const EditorPane = ({
 
   const memoRef = useRef<MemoDetail | null>(memo);
   const editorRef = useRef<Editor | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const noteReplaceInputRef = useRef<HTMLInputElement | null>(null);
   const hydratingRef = useRef(false);
@@ -348,6 +350,65 @@ export const EditorPane = ({
               title: file.name,
             })
             .run();
+        }
+
+        setImageUploadState("idle");
+      } catch {
+        setImageUploadState("error");
+        window.setTimeout(() => setImageUploadState("idle"), 2200);
+      }
+    })();
+  }, [queryClient]);
+
+  const insertResourceFiles = useCallback((files: File[]) => {
+    const currentMemo = memoRef.current;
+    const currentEditor = editorRef.current;
+
+    if (!currentMemo || currentMemo.isDeleted || !currentEditor || !currentEditor.isEditable || files.length === 0) {
+      return;
+    }
+
+    const targetMemoId = currentMemo.id;
+
+    void (async () => {
+      setImageUploadState("uploading");
+
+      try {
+        for (const file of files) {
+          const isImage = SUPPORTED_PASTE_IMAGE_TYPES.has(file.type);
+          const shouldCompress = isImage && imageCompressionEnabledRef.current;
+          setImageUploadState(shouldCompress ? "compressing" : "uploading");
+          const uploadFile = shouldCompress ? (await compressImageForUpload(file)).file : file;
+
+          setImageUploadState("uploading");
+          const { resource } = await api.uploadMemoResource(targetMemoId, uploadFile);
+          void queryClient.invalidateQueries({ queryKey: ["resources"] });
+
+          if (memoRef.current?.id !== targetMemoId || !editorRef.current) {
+            setImageUploadState("idle");
+            return;
+          }
+
+          if (resource.kind === "image") {
+            editorRef.current
+              .chain()
+              .focus()
+              .setImage({
+                src: resource.url,
+                alt: file.name,
+                title: file.name,
+              })
+              .run();
+          } else {
+            editorRef.current
+              .chain()
+              .focus()
+              .insertContent({
+                type: "paragraph",
+                content: [{ type: "text", text: `附件：${resource.filename || file.name} ${resource.url}` }],
+              })
+              .run();
+          }
         }
 
         setImageUploadState("idle");
@@ -816,7 +877,7 @@ export const EditorPane = ({
 
   const imageUploadLabel =
     imageUploadState === "error"
-      ? "图片失败"
+      ? "上传失败"
       : imageUploadState === "compressing"
         ? "压缩中"
         : imageUploadState === "uploading"
@@ -977,10 +1038,10 @@ export const EditorPane = ({
                 )}
               >
                 {imageUploadState === "error"
-                  ? "图片上传失败"
+                  ? "文件上传失败"
                   : imageUploadState === "compressing"
                     ? "图片压缩中"
-                    : "图片上传中"}
+                    : "文件上传中"}
               </span>
             )}
             <span className={cn("hidden rounded-md px-2 py-1 text-xs font-medium sm:inline-flex", saveStateClassName)}>
@@ -998,6 +1059,30 @@ export const EditorPane = ({
               >
                 {saveMutation.isPending ? "保存中" : "完成"}
               </button>
+            )}
+            <input
+              ref={fileInputRef}
+              className="hidden"
+              type="file"
+              multiple
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                insertResourceFiles(files);
+              }}
+            />
+            {isMobileEditing && !readOnly && (
+              <Button
+                className="sm:hidden"
+                size="icon"
+                variant="ghost"
+                title="上传附件"
+                aria-label="上传附件"
+                disabled={mobileDoneDisabled || effectiveReadOnly}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
             )}
             <Button className="hidden sm:inline-flex" size="icon" variant="ghost" title="搜索当前笔记" aria-label="搜索当前笔记" onClick={() => openNoteSearch()}>
               <Search className="h-4 w-4" />
