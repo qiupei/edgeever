@@ -695,7 +695,11 @@ export const MemoListPane = ({
       return;
     }
 
-    if (!event.altKey && (event.ctrlKey || event.metaKey) && (event.key === "Delete" || event.key === "Backspace")) {
+    const isDeleteSelectedShortcut =
+      !event.altKey &&
+      (event.key === "Delete" || ((event.ctrlKey || event.metaKey) && event.key === "Backspace"));
+
+    if (isDeleteSelectedShortcut) {
       if (selectionMode && selectedMemoIds.size > 0) {
         event.preventDefault();
         setMemoContextMenu(null);
