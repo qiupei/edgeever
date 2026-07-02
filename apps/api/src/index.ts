@@ -193,7 +193,8 @@ const PASSWORD_HASH_ITERATIONS = 100_000;
 const PASSWORD_HASH_BYTES = 32;
 const PASSWORD_SALT_BYTES = 16;
 const SESSION_TOKEN_BYTES = 32;
-const DEFAULT_SESSION_TTL_DAYS = 30;
+const DEFAULT_SESSION_TTL_DAYS = 5 * 365;
+const MAX_SESSION_TTL_DAYS = 5 * 365;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const DEMO_SEED_NOTEBOOKS = [
   { id: "nb_inbox", parentId: null, name: "等待分类", slug: "inbox", icon: "notebook", color: "#0f766e", sortOrder: 10 },
@@ -2427,7 +2428,7 @@ const isTokenScope = (scope: string): scope is TokenScope =>
   (ALL_TOKEN_SCOPES as readonly string[]).includes(scope);
 
 const getSessionMaxAge = (env: Bindings) => {
-  const days = clampNumber(Number(env.EDGE_EVER_SESSION_TTL_DAYS ?? DEFAULT_SESSION_TTL_DAYS), 1, 90);
+  const days = clampNumber(Number(env.EDGE_EVER_SESSION_TTL_DAYS ?? DEFAULT_SESSION_TTL_DAYS), 1, MAX_SESSION_TTL_DAYS);
   return days * 24 * 60 * 60;
 };
 
