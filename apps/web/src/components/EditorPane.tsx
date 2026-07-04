@@ -51,7 +51,7 @@ import { EditorToolbar } from "./EditorToolbar";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
 import { api } from "@/lib/api";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
-import { docToMarkdown, type Notebook, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
+import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
 import { compressImageForUpload } from "@/lib/image-compression";
 import { localDb, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import { getMemoUpdateQueueId, queueMemoUpdate, shouldQueueMemoSaveError } from "@/lib/sync-queue";
@@ -62,6 +62,8 @@ import {
 
 const SUPPORTED_PASTE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 const MOBILE_EDITOR_QUERY = "(max-width: 639px)";
+const EDITOR_AUTO_SAVE_DELAY_MS = 1200;
+const MOBILE_DRAFT_PERSIST_DELAY_MS = 800;
 const DEFAULT_IMAGE_WIDTH_PERCENT = 72;
 const MIN_IMAGE_WIDTH_PERCENT = 25;
 const MAX_IMAGE_WIDTH_PERCENT = 100;
@@ -422,10 +424,12 @@ export const EditorPane = ({
     typeof window === "undefined" ? false : window.matchMedia(MOBILE_EDITOR_QUERY).matches
   );
   const [isMobileEditing, setIsMobileEditing] = useState(false);
+  const [mobilePlainText, setMobilePlainText] = useState("");
   const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
   const notebookOptions = useMemo(() => getNotebookMoveOptions(notebooks), [notebooks]);
   const readOnly = isTrashView || Boolean(memo?.isDeleted);
   const effectiveReadOnly = readOnly || (isMobileViewport && !isMobileEditing);
+  const useMobilePlainTextEditor = isMobileViewport && isMobileEditing && !readOnly;
 
   const memoRef = useRef<MemoDetail | null>(memo);
   const editorRef = useRef<Editor | null>(null);
@@ -775,11 +779,11 @@ export const EditorPane = ({
   }, [editor]);
 
   const persistCurrentDraft = useCallback(
-    (nextTitle = title, nextTagsText = tagsText) => {
+    (nextTitle = title, nextTagsText = tagsText, nextMobilePlainText = mobilePlainText) => {
       const currentMemo = memoRef.current;
       const currentEditor = editorRef.current;
 
-      if (!currentMemo || currentMemo.isDeleted || !isEditorReady(currentEditor)) {
+      if (!currentMemo || currentMemo.isDeleted || (!useMobilePlainTextEditor && !isEditorReady(currentEditor))) {
         return;
       }
 
@@ -787,11 +791,11 @@ export const EditorPane = ({
         memoId: currentMemo.id,
         title: nextTitle,
         tagsText: nextTagsText,
-        contentJson: currentEditor.getJSON() as TiptapDoc,
+        contentJson: useMobilePlainTextEditor ? markdownToDoc(nextMobilePlainText) : (currentEditor?.getJSON() as TiptapDoc),
         updatedAt: new Date().toISOString(),
       });
     },
-    [tagsText, title]
+    [mobilePlainText, tagsText, title, useMobilePlainTextEditor]
   );
 
   const markDirty = useCallback(() => {
@@ -806,18 +810,31 @@ export const EditorPane = ({
     setSaveState((current) => (current === "conflict" ? current : "idle"));
   }, []);
 
-  const currentSnapshot = useCallback(() => {
+  const getCurrentContentJson = useCallback((): TiptapDoc | null => {
+    if (useMobilePlainTextEditor) {
+      return markdownToDoc(mobilePlainText);
+    }
+
     const currentEditor = editorRef.current;
     if (!isEditorReady(currentEditor)) {
+      return null;
+    }
+
+    return currentEditor.getJSON() as TiptapDoc;
+  }, [mobilePlainText, useMobilePlainTextEditor]);
+
+  const currentSnapshot = useCallback(() => {
+    const contentJson = getCurrentContentJson();
+    if (!contentJson) {
       return null;
     }
 
     return JSON.stringify({
       title,
       tagsText,
-      contentJson: currentEditor.getJSON(),
+      contentJson,
     });
-  }, [tagsText, title]);
+  }, [getCurrentContentJson, tagsText, title]);
 
   useEffect(() => {
     const currentEditor = editorRef.current;
@@ -830,6 +847,7 @@ export const EditorPane = ({
       setHasUnsavedChanges(false);
       setTitle("");
       setTagsText("");
+      setMobilePlainText("");
       setSaveState("idle");
       if (isEditorReady(currentEditor)) {
         currentEditor.commands.clearContent();
@@ -871,6 +889,7 @@ export const EditorPane = ({
       setSaveState(queuedUpdate ? syncStatusToSaveState(queuedUpdate.status) : "idle");
       setTitle(nextTitle);
       setTagsText(nextTagsText);
+      setMobilePlainText(docToMarkdown(nextContent));
 
       if (isEditorReady(currentEditor)) {
         currentEditor.commands.setContent(nextContent);
@@ -885,6 +904,21 @@ export const EditorPane = ({
       cancelled = true;
     };
   }, [isTrashView, memo, editor]);
+
+  useEffect(() => {
+    if (!useMobilePlainTextEditor) {
+      return;
+    }
+
+    if (isEditorReady(editor)) {
+      setMobilePlainText(docToMarkdown(editor.getJSON() as TiptapDoc));
+      return;
+    }
+
+    if (memo) {
+      setMobilePlainText(docToMarkdown(memo.contentJson));
+    }
+  }, [editor, memo?.id, useMobilePlainTextEditor]);
 
   useEffect(() => {
     if (isEditorReady(editor)) {
@@ -911,12 +945,49 @@ export const EditorPane = ({
     };
   }, [editor, markDirty, memo, persistCurrentDraft]);
 
+  useEffect(() => {
+    if (!useMobilePlainTextEditor || !memo || !hasUnsavedChanges) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      persistCurrentDraft(title, tagsText, mobilePlainText);
+    }, MOBILE_DRAFT_PERSIST_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [hasUnsavedChanges, memo, mobilePlainText, persistCurrentDraft, tagsText, title, useMobilePlainTextEditor]);
+
+  useEffect(() => {
+    if (!useMobilePlainTextEditor) {
+      return;
+    }
+
+    const persistBeforeSuspend = () => {
+      if (hasUnsavedChangesRef.current) {
+        persistCurrentDraft(title, tagsText, mobilePlainText);
+      }
+    };
+    const persistWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        persistBeforeSuspend();
+      }
+    };
+
+    window.addEventListener("pagehide", persistBeforeSuspend);
+    document.addEventListener("visibilitychange", persistWhenHidden);
+
+    return () => {
+      window.removeEventListener("pagehide", persistBeforeSuspend);
+      document.removeEventListener("visibilitychange", persistWhenHidden);
+    };
+  }, [mobilePlainText, persistCurrentDraft, tagsText, title, useMobilePlainTextEditor]);
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const currentMemo = memoRef.current;
-      const currentEditor = editorRef.current;
+      const contentJson = getCurrentContentJson();
 
-      if (!currentMemo || !isEditorReady(currentEditor)) {
+      if (!currentMemo || !contentJson) {
         throw new Error("No memo selected");
       }
 
@@ -929,7 +1000,6 @@ export const EditorPane = ({
         throw new Error("Editor is not ready");
       }
 
-      const contentJson = currentEditor.getJSON() as TiptapDoc;
       const payload: MemoUpdateSyncPayload = {
         memoId: currentMemo.id,
         expectedRevision: currentMemo.revision,
@@ -955,9 +1025,19 @@ export const EditorPane = ({
     onMutate: () => setSaveState("saving"),
     onSuccess: async ({ memo: savedMemo, snapshot }) => {
       memoRef.current = savedMemo;
+
+      if (useMobilePlainTextEditor && isEditorReady(editorRef.current)) {
+        hydratingRef.current = true;
+        editorRef.current.commands.setContent(savedMemo.contentJson);
+        window.setTimeout(() => {
+          hydratingRef.current = false;
+        }, 0);
+      }
+
       await onSaved(savedMemo);
 
       if (currentSnapshot() === snapshot) {
+        setMobilePlainText(docToMarkdown(savedMemo.contentJson));
         hasUnsavedChangesRef.current = false;
         setHasUnsavedChanges(false);
         await localDb.drafts.delete(savedMemo.id);
@@ -1017,7 +1097,7 @@ export const EditorPane = ({
 
     const timer = window.setTimeout(() => {
       saveMutation.mutate();
-    }, 1200);
+    }, EDITOR_AUTO_SAVE_DELAY_MS);
 
     return () => window.clearTimeout(timer);
   }, [dirtyVersion, editor, hasUnsavedChanges, memo, saveMutation, saveState]);
@@ -1279,7 +1359,7 @@ export const EditorPane = ({
                 insertResourceFiles(files);
               }}
             />
-            {isMobileEditing && !readOnly && (
+            {isMobileEditing && !readOnly && !useMobilePlainTextEditor && (
               <Button
                 className="sm:hidden"
                 size="icon"
@@ -1403,7 +1483,7 @@ export const EditorPane = ({
             readOnly={effectiveReadOnly}
             onChange={(event) => {
               setTitle(event.target.value);
-              persistCurrentDraft(event.target.value, tagsText);
+              persistCurrentDraft(event.target.value, tagsText, mobilePlainText);
               markDirty();
             }}
             className="block w-full rounded-md border-0 bg-transparent text-2xl font-bold leading-tight text-slate-950 outline-none transition placeholder:text-slate-300 focus-visible:bg-slate-50 focus-visible:shadow-[inset_3px_0_0_var(--brand-green)] sm:text-3xl"
@@ -1446,7 +1526,7 @@ export const EditorPane = ({
                 readOnly={effectiveReadOnly}
                 onChange={(event) => {
                   setTagsText(event.target.value);
-                  persistCurrentDraft(title, event.target.value);
+                  persistCurrentDraft(title, event.target.value, mobilePlainText);
                   markDirty();
                 }}
                 className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400"
@@ -1544,11 +1624,27 @@ export const EditorPane = ({
             </Button>
           </div>
         )}
-        {(!isMobileViewport || mobileToolbarOpen) && <EditorToolbar editor={editor} readOnly={effectiveReadOnly} />}
+        {(!isMobileViewport || (mobileToolbarOpen && !useMobilePlainTextEditor)) && <EditorToolbar editor={editor} readOnly={effectiveReadOnly} />}
       </header>
 
       <div className="edgeever-editor min-h-0 flex-1 overflow-y-auto bg-white">
-        <EditorContent editor={editor} />
+        {useMobilePlainTextEditor ? (
+          <textarea
+            value={mobilePlainText}
+            onChange={(event) => {
+              const nextText = event.target.value;
+              setMobilePlainText(nextText);
+              markDirty();
+            }}
+            className="block min-h-full w-full resize-none border-0 bg-white px-4 py-3 text-base leading-7 text-slate-900 outline-none placeholder:text-slate-400 sm:px-7"
+            placeholder="开始记录..."
+            autoCapitalize="sentences"
+            autoCorrect="on"
+            spellCheck
+          />
+        ) : (
+          <EditorContent editor={editor} />
+        )}
       </div>
 
       {isMobileViewport && !isMobileEditing && !readOnly && (
@@ -1566,7 +1662,13 @@ export const EditorPane = ({
 
       {historyOpen && (
         <RevisionHistoryDialog
-          currentMarkdown={isEditorReady(editor) ? docToMarkdown(editor.getJSON() as TiptapDoc) : memo.contentMarkdown}
+          currentMarkdown={
+            useMobilePlainTextEditor
+              ? mobilePlainText
+              : isEditorReady(editor)
+                ? docToMarkdown(editor.getJSON() as TiptapDoc)
+                : memo.contentMarkdown
+          }
           memo={memo}
           onClose={() => setHistoryOpen(false)}
           onRestored={async (restoredMemo) => {
