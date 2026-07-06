@@ -100,12 +100,12 @@ export const siteCopy = {
           ],
         },
         {
-          title: "多端随手记录，同步几乎无感",
-          summary: "电脑、手机、平板都能直接打开使用，记录和同步尽量贴近本地应用的顺滑体验。",
+          title: "多端无缝同步，不限设备数",
+          summary: "电脑、手机、平板都能直接同步，自建实例让你彻底摆脱商业笔记平台的登录设备数限制。",
           points: [
+            "不限登录设备数：个人独享自建 API，再也不受商业笔记平台的“只允许登录 2 台设备”等限制。",
             "支持 PC 与移动端网页访问，也可以安装成 PWA，随手打开就能记。",
             "已有笔记支持离线编辑草稿和本地同步队列，弱网时也能先写后同步。",
-            "单用户登录、PBKDF2-SHA256 密码 hash 与独立 API Token，安全能力放在顺手体验背后。",
           ],
         },
       ],
@@ -211,12 +211,12 @@ export const siteCopy = {
           ],
         },
         {
-          title: "Works across desktop and mobile",
-          summary: "Use EdgeEver from desktop, phone, or tablet with a PWA-friendly experience.",
+          title: "Multi-device sync, uncapped limits",
+          summary: "Use EdgeEver from desktop, phone, or tablet with no device limits and a PWA-friendly experience.",
           points: [
+            "No device limits: self-hosted API means no commercial restrictions on the number of active login devices.",
             "Open it in the browser or install it as a PWA for quick capture.",
             "Existing notes support offline drafts and a local sync queue for weak network conditions.",
-            "Single-user login, PBKDF2-SHA256 password hashing, and API tokens stay behind a simple UI.",
           ],
         },
       ],
