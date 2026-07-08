@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import type { MemoFilterMode, MemoSortMode } from "@edgeever/client";
 import {
   Archive,
   BookOpen,
   Check,
+  Copy,
   ExternalLink,
   FileText,
   Folder,
@@ -13,6 +15,7 @@ import {
   History,
   Home,
   Image as ImageIcon,
+  KeyRound,
   LogOut,
   Merge,
   Pencil,
@@ -22,6 +25,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  ShieldCheck,
   Tag,
   Trash2,
   Upload,
@@ -44,7 +48,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import type { MemoDetail, MemoRevision, MemoSummary, Notebook, ResourceListItem, TagSummary } from "@edgeever/shared";
+import type { ApiToken, MemoDetail, MemoRevision, MemoSummary, Notebook, ResourceListItem, TagSummary } from "@edgeever/shared";
 import { useSession } from "../lib/session";
 
 const ALL_NOTES_ID = "all";
@@ -86,6 +90,16 @@ const MEMO_TEMPLATES: MemoTemplate[] = [
     tags: ["template", "daily"],
   },
 ];
+const ALL_TOKEN_SCOPES = [
+  "read:notebooks",
+  "write:notebooks",
+  "read:memos",
+  "write:memos",
+  "read:resources",
+  "write:resources",
+  "read:tags",
+  "write:tags",
+];
 
 type MobileView = "notes" | "search" | "account" | "settings";
 type MemoView = "notebook" | "trash";
@@ -113,6 +127,7 @@ export const WorkspaceScreen = () => {
   const [notebookManagerOpen, setNotebookManagerOpen] = useState(false);
   const [tagsManagerOpen, setTagsManagerOpen] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
+  const [apiTokensOpen, setApiTokensOpen] = useState(false);
   const [revisionMemo, setRevisionMemo] = useState<MemoDetail | null>(null);
   const [selectedMemoIds, setSelectedMemoIds] = useState<Set<string>>(() => new Set());
   const [selectionMoveOpen, setSelectionMoveOpen] = useState(false);
@@ -471,6 +486,7 @@ export const WorkspaceScreen = () => {
         <SettingsView
           notebookCount={notebooks.length}
           memoCount={memoCount}
+          onOpenApiTokens={() => setApiTokensOpen(true)}
           onOpenNotebookManager={() => setNotebookManagerOpen(true)}
           onOpenResources={() => setResourcesOpen(true)}
           onOpenTagsManager={() => setTagsManagerOpen(true)}
@@ -508,6 +524,7 @@ export const WorkspaceScreen = () => {
       <NotebookManagerModal notebooks={notebooks} onClose={() => setNotebookManagerOpen(false)} visible={notebookManagerOpen} />
       <TagsManagerModal onClose={() => setTagsManagerOpen(false)} visible={tagsManagerOpen} />
       <ResourcesModal activeMemo={selectedMemo} onClose={() => setResourcesOpen(false)} visible={resourcesOpen} />
+      <ApiTokensModal baseUrl={session?.baseUrl ?? ""} onClose={() => setApiTokensOpen(false)} visible={apiTokensOpen} />
       <RevisionHistoryModal
         memo={revisionMemo}
         onClose={() => setRevisionMemo(null)}
@@ -829,6 +846,7 @@ const AccountView = ({ instance, userName, onSignOut }: { instance: string; user
 const SettingsView = ({
   memoCount,
   notebookCount,
+  onOpenApiTokens,
   onOpenNotebookManager,
   onOpenResources,
   onOpenTagsManager,
@@ -836,6 +854,7 @@ const SettingsView = ({
 }: {
   memoCount: number;
   notebookCount: number;
+  onOpenApiTokens: () => void;
   onOpenNotebookManager: () => void;
   onOpenResources: () => void;
   onOpenTagsManager: () => void;
@@ -854,6 +873,9 @@ const SettingsView = ({
     </Pressable>
     <Pressable onPress={onOpenTemplates}>
       <PanelRow label="模板" value="速记、会议、清单、读书、复盘" />
+    </Pressable>
+    <Pressable onPress={onOpenApiTokens}>
+      <PanelRow label="MCP 与 API Token" value="创建、复制、撤销 Token" />
     </Pressable>
     <PanelRow label="移动端形态" value="React Native" />
     <PanelRow label="笔记本数量" value={String(notebookCount)} />
@@ -1375,6 +1397,248 @@ const TagsManagerModal = ({ onClose, visible }: { onClose: () => void; visible: 
         )}
       </SafeAreaView>
     </Modal>
+  );
+};
+
+const ApiTokensModal = ({ baseUrl, onClose, visible }: { baseUrl: string; onClose: () => void; visible: boolean }) => {
+  const { client } = useSession();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("MCP Agent");
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => new Set(ALL_TOKEN_SCOPES));
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
+
+  const tokensQuery = useQuery({
+    queryKey: ["mobile", "api-tokens"],
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Client is not ready");
+      }
+
+      return client.listApiTokens();
+    },
+    enabled: Boolean(client && visible),
+  });
+
+  const availableScopes = tokensQuery.data?.availableScopes ?? ALL_TOKEN_SCOPES;
+  const tokens = tokensQuery.data?.apiTokens ?? [];
+
+  useEffect(() => {
+    if (tokensQuery.data?.availableScopes) {
+      setSelectedScopes(new Set(tokensQuery.data.availableScopes));
+    }
+  }, [tokensQuery.data?.availableScopes]);
+
+  const createTokenMutation = useMutation({
+    mutationFn: async () => {
+      if (!client) {
+        throw new Error("Client is not ready");
+      }
+
+      const trimmedName = name.trim();
+      const scopes = Array.from(selectedScopes);
+
+      if (!trimmedName) {
+        throw new Error("请输入 Token 名称");
+      }
+
+      if (scopes.length === 0) {
+        throw new Error("请至少选择一个权限");
+      }
+
+      return client.createApiToken({ name: trimmedName, scopes });
+    },
+    onSuccess: async (data) => {
+      setCreatedToken(data.token);
+      setName("");
+      await queryClient.invalidateQueries({ queryKey: ["mobile", "api-tokens"] });
+    },
+  });
+
+  const revokeTokenMutation = useMutation({
+    mutationFn: async (tokenId: string) => {
+      if (!client) {
+        throw new Error("Client is not ready");
+      }
+
+      return client.revokeApiToken(tokenId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["mobile", "api-tokens"] });
+    },
+  });
+
+  const toggleScope = (scope: string) => {
+    setSelectedScopes((current) => {
+      const next = new Set(current);
+
+      if (next.has(scope)) {
+        next.delete(scope);
+      } else {
+        next.add(scope);
+      }
+
+      return next;
+    });
+  };
+
+  const copyText = async (value: string, label: string) => {
+    await Clipboard.setStringAsync(value);
+    setCopiedValue(label);
+    setTimeout(() => {
+      setCopiedValue((current) => (current === label ? null : current));
+    }, 1600);
+  };
+
+  const requestRevokeToken = (token: ApiToken) => {
+    Alert.alert("撤销 Token？", `将撤销“${token.name}”，使用它的 MCP 客户端会失去访问权限。`, [
+      { text: "取消", style: "cancel" },
+      {
+        text: "撤销",
+        style: "destructive",
+        onPress: () => revokeTokenMutation.mutate(token.id),
+      },
+    ]);
+  };
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
+      <SafeAreaView style={styles.modalSafeArea}>
+        <View style={styles.modalHeader}>
+          <IconButton onPress={onClose}>
+            <X color="#0f172a" size={20} />
+          </IconButton>
+          <Text style={styles.modalTitle}>MCP 与 API Token</Text>
+          <IconButton onPress={() => tokensQuery.refetch()}>
+            {tokensQuery.isFetching ? <ActivityIndicator color="#0f172a" /> : <RefreshCw color="#0f172a" size={18} />}
+          </IconButton>
+        </View>
+
+        <ScrollView contentContainerStyle={styles.editorForm}>
+          <Text style={styles.sectionSubtitle}>创建远程 MCP 或 API 调用使用的 Bearer Token。</Text>
+
+          {createdToken ? (
+            <View style={styles.createdTokenPanel}>
+              <View style={styles.assetsSummary}>
+                <ShieldCheck color="#047857" size={18} />
+                <Text style={styles.assetsSummaryText}>Token 已创建</Text>
+              </View>
+              <Text selectable numberOfLines={2} style={styles.tokenValueText}>
+                {createdToken}
+              </Text>
+              <View style={styles.tokenActionRow}>
+                <ActionButton label={copiedValue === "created-token" ? "已复制" : "复制 Token"} onPress={() => copyText(createdToken, "created-token")}>
+                  <Copy color="#0f172a" size={16} />
+                </ActionButton>
+                <ActionButton label={copiedValue === "created-config" ? "已复制" : "复制 MCP 配置"} onPress={() => copyText(buildMcpRemoteConfig(baseUrl, createdToken), "created-config")}>
+                  <KeyRound color="#0f172a" size={16} />
+                </ActionButton>
+              </View>
+              <Text style={styles.assetsHint}>请立即保存。离开后服务端不会再次显示完整 Token。</Text>
+            </View>
+          ) : null}
+
+          <Text style={styles.label}>Token 名称</Text>
+          <TextInput onChangeText={setName} placeholder="MCP Agent" placeholderTextColor="#94a3b8" style={styles.titleInput} value={name} />
+
+          <Text style={styles.label}>权限范围</Text>
+          <View style={styles.scopeGrid}>
+            {availableScopes.map((scope) => {
+              const selected = selectedScopes.has(scope);
+
+              return (
+                <Pressable key={scope} onPress={() => toggleScope(scope)} style={[styles.scopePill, selected && styles.scopePillActive]}>
+                  <Text style={[styles.scopePillText, selected && styles.scopePillTextActive]}>{getTokenScopeLabel(scope)}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable
+            disabled={createTokenMutation.isPending}
+            onPress={() => createTokenMutation.mutate()}
+            style={[styles.uploadButton, createTokenMutation.isPending && styles.buttonDisabled]}
+          >
+            {createTokenMutation.isPending ? <ActivityIndicator color="#ffffff" /> : <Plus color="#ffffff" size={18} />}
+            <Text style={styles.uploadButtonText}>{createTokenMutation.isPending ? "创建中" : "创建 Token"}</Text>
+          </Pressable>
+          {createTokenMutation.error ? (
+            <Text style={styles.errorText}>{createTokenMutation.error instanceof Error ? createTokenMutation.error.message : "创建失败"}</Text>
+          ) : null}
+
+          <Text style={styles.label}>活跃 Token</Text>
+          {tokensQuery.isLoading ? (
+            <View style={styles.centerInline}>
+              <ActivityIndicator color="#0f172a" />
+            </View>
+          ) : tokens.length === 0 ? (
+            <View style={styles.emptyInlinePanel}>
+              <KeyRound color="#94a3b8" size={28} />
+              <Text style={styles.mutedText}>暂无 Token</Text>
+            </View>
+          ) : (
+            tokens.map((token) => (
+              <ApiTokenRow
+                baseUrl={baseUrl}
+                copiedValue={copiedValue}
+                isDeleting={revokeTokenMutation.isPending}
+                key={token.id}
+                onCopy={copyText}
+                onDelete={requestRevokeToken}
+                token={token}
+              />
+            ))
+          )}
+          {revokeTokenMutation.error ? (
+            <Text style={styles.errorText}>{revokeTokenMutation.error instanceof Error ? revokeTokenMutation.error.message : "撤销失败"}</Text>
+          ) : null}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+};
+
+const ApiTokenRow = ({
+  baseUrl,
+  copiedValue,
+  isDeleting,
+  onCopy,
+  onDelete,
+  token,
+}: {
+  baseUrl: string;
+  copiedValue: string | null;
+  isDeleting: boolean;
+  onCopy: (value: string, label: string) => void;
+  onDelete: (token: ApiToken) => void;
+  token: ApiToken;
+}) => {
+  const tokenCopyLabel = `token-${token.id}`;
+  const configCopyLabel = `config-${token.id}`;
+
+  return (
+    <View style={[styles.apiTokenRow, token.isRevoked && styles.buttonDisabled]}>
+      <View style={styles.notebookManageText}>
+        <Text numberOfLines={1} style={styles.panelValue}>
+          {token.name}
+        </Text>
+        <Text numberOfLines={2} style={styles.panelLabel}>
+          {token.scopes.map(getTokenScopeLabel).join("、") || "无权限"}
+        </Text>
+        <Text style={styles.panelLabel}>{token.lastUsedAt ? `最近使用 ${formatDate(token.lastUsedAt)}` : "从未使用"}</Text>
+      </View>
+      <View style={styles.apiTokenActions}>
+        <IconButton onPress={() => token.token && onCopy(token.token, tokenCopyLabel)}>
+          {copiedValue === tokenCopyLabel ? <ShieldCheck color="#047857" size={18} /> : <Copy color={token.token ? "#0f172a" : "#cbd5e1"} size={18} />}
+        </IconButton>
+        <IconButton onPress={() => token.token && onCopy(buildMcpRemoteConfig(baseUrl, token.token), configCopyLabel)}>
+          {copiedValue === configCopyLabel ? <ShieldCheck color="#047857" size={18} /> : <KeyRound color={token.token ? "#0f172a" : "#cbd5e1"} size={18} />}
+        </IconButton>
+        <IconButton onPress={() => !isDeleting && onDelete(token)}>
+          <Trash2 color="#b91c1c" size={18} />
+        </IconButton>
+      </View>
+    </View>
   );
 };
 
@@ -2361,6 +2625,37 @@ const openResource = (resource: ResourceListItem) => {
   });
 };
 
+const getTokenScopeLabel = (scope: string) => {
+  const labels: Record<string, string> = {
+    "read:notebooks": "读取笔记本",
+    "write:notebooks": "写入笔记本",
+    "read:memos": "读取笔记",
+    "write:memos": "写入笔记",
+    "read:resources": "读取资源",
+    "write:resources": "写入资源",
+    "read:tags": "读取标签",
+    "write:tags": "写入标签",
+  };
+
+  return labels[scope] ?? scope;
+};
+
+const buildMcpRemoteConfig = (baseUrl: string, token: string) =>
+  JSON.stringify(
+    {
+      mcpServers: {
+        edgeever: {
+          url: `${baseUrl.replace(/\/+$/, "")}/mcp`,
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      },
+    },
+    null,
+    2
+  );
+
 const countChangedLines = (left: string, right: string) => {
   const leftLines = left.split("\n");
   const rightLines = right.split("\n");
@@ -2921,6 +3216,85 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 60,
     padding: 10,
+  },
+  createdTokenPanel: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 12,
+  },
+  tokenValueText: {
+    backgroundColor: "#ffffff",
+    borderColor: "#a7f3d0",
+    borderRadius: 8,
+    borderWidth: 1,
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    padding: 10,
+  },
+  tokenActionRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  scopeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  scopePill: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  scopePillActive: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#34d399",
+  },
+  scopePillText: {
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  scopePillTextActive: {
+    color: "#047857",
+  },
+  apiTokenRow: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 82,
+    padding: 12,
+  },
+  apiTokenActions: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  centerInline: {
+    alignItems: "center",
+    padding: 18,
+  },
+  emptyInlinePanel: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    gap: 8,
+    padding: 22,
   },
   templateCard: {
     alignItems: "center",
