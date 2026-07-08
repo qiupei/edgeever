@@ -103,6 +103,18 @@ import {
 const ALL_NOTES_ID = "all";
 const DEFAULT_MEMO_TITLE = "无标题笔记";
 const MOBILE_APP_VERSION = "0.1.2";
+const EVERNOTE_IMPORT_SCRIPT_URL =
+  "https://raw.githubusercontent.com/tianma-if/edgeever/main/scripts/import-evernote-enex-via-mcp.mjs";
+const EVERNOTE_MIGRATION_PROMPT = `你是 AI 编程助手。请帮我把本地的印象笔记全量迁移到我当前部署的 EdgeEver 实例中：
+1. 检查并使用 \`pipx install evernote-backup\` 自动安装备份工具。
+2. 提示我输入印象笔记的用户名和密码并初始化数据库（指定 china 后端），随后同步数据并导出到 \`./evernote-export\` 目录。
+3. 从 GitHub 下载最新版迁移脚本：\`${EVERNOTE_IMPORT_SCRIPT_URL}\` 到本地。
+4. 安装脚本所需的本地图片压缩库 \`sharp\` 和 \`fast-xml-parser\` 依赖。
+5. 使用先前配置的 URL 和 Token 运行该脚本完成迁移（脚本会自动进行 WebP 图片转换）：
+   - 全量迁移：\`bun import-evernote-enex-via-mcp.mjs --input "./evernote-export" --yes\`
+   - 指定迁移某些笔记本：追加 \`--include "笔记本A,笔记本B"\` 参数。
+
+请告诉我你需要什么信息（如账号密码），收到后直接并发自动执行上述步骤。`;
 const MEMO_TEMPLATES: MemoTemplate[] = [
   {
     id: "quick-note",
@@ -2408,56 +2420,88 @@ const ApiTokenRow = ({
   );
 };
 
-const EvernoteGuideModal = ({ onClose, visible }: { onClose: () => void; visible: boolean }) => (
-  <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
-    <SafeAreaView style={styles.modalSafeArea}>
-      <View style={styles.modalHeader}>
-        <IconButton onPress={onClose}>
-          <X color="#0f172a" size={20} />
-        </IconButton>
-        <Text style={styles.modalTitle}>Evernote 导入指引</Text>
-        <View style={styles.iconButtonPlaceholder} />
-      </View>
+const EvernoteGuideModal = ({ onClose, visible }: { onClose: () => void; visible: boolean }) => {
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
 
-      <ScrollView contentContainerStyle={styles.editorForm}>
-        <View style={styles.guideHero}>
-          <Upload color="#047857" size={24} />
-          <Text style={styles.panelValue}>推荐通过 AI 编程助手 + EdgeEver MCP 自动迁移</Text>
-          <Text style={styles.panelLabel}>该流程用于从 Evernote/印象笔记导出 ENEX，并通过 MCP 批量导入 EdgeEver。</Text>
+  const copyText = async (value: string, label: string) => {
+    await Clipboard.setStringAsync(value);
+    setCopiedValue(label);
+    setTimeout(() => setCopiedValue((current) => (current === label ? null : current)), 1600);
+  };
+
+  return (
+    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
+      <SafeAreaView style={styles.modalSafeArea}>
+        <View style={styles.modalHeader}>
+          <IconButton onPress={onClose}>
+            <X color="#0f172a" size={20} />
+          </IconButton>
+          <Text style={styles.modalTitle}>Evernote 导入指引</Text>
+          <IconButton onPress={() => copyText(EVERNOTE_MIGRATION_PROMPT, "prompt-header")}>
+            {copiedValue === "prompt-header" ? <ShieldCheck color="#047857" size={18} /> : <Copy color="#0f172a" size={18} />}
+          </IconButton>
         </View>
 
-        <GuideStep
-          title="1. 创建 EdgeEver MCP Token"
-          body="在设置页打开“MCP 与 API Token”，创建包含笔记本、笔记、资源、标签读写权限的 Token，并复制完整 MCP 配置。"
-        />
-        <GuideStep
-          title="2. 配置到 AI 编程助手"
-          body="把 MCP 配置发送给 Claude Code、Cursor、Cline 等工具，让它写入当前客户端的 MCP 配置文件。"
-        />
-        <GuideStep
-          title="3. 让助手执行迁移"
-          body="要求助手安装 evernote-backup，同步 Evernote 数据，下载 EdgeEver 的 import-evernote-enex-via-mcp.mjs 脚本，并运行导入。"
-        />
-        <GuideStep
-          title="4. 回到 EdgeEver 验证"
-          body="导入完成后刷新客户端，检查笔记本层级、笔记内容、图片资源是否正常。"
-        />
+        <ScrollView contentContainerStyle={styles.editorForm}>
+          <View style={styles.guideHero}>
+            <Upload color="#047857" size={24} />
+            <Text style={styles.panelValue}>推荐通过 AI 编程助手 + EdgeEver MCP 自动迁移</Text>
+            <Text style={styles.panelLabel}>
+              该方案支持大体量 ENEX 导入、WebP 图片转换、创建/修改时间保留，以及嵌套笔记本目录层级还原。
+            </Text>
+          </View>
 
-        <View style={styles.revisionPreviewBlock}>
-          <Text style={styles.label}>可直接复制给 AI 助手的 Prompt</Text>
-          <Text selectable style={styles.revisionPreviewText}>
-            你是 AI 编程助手。请帮我把本地的印象笔记全量迁移到我当前部署的 EdgeEver 实例中：{"\n"}
-            1. 检查并使用 `pipx install evernote-backup` 自动安装备份工具。{"\n"}
-            2. 提示我输入印象笔记的用户名和密码并初始化数据库，随后同步数据并导出到 `./evernote-export`。{"\n"}
-            3. 从 GitHub 下载最新版迁移脚本 `scripts/import-evernote-enex-via-mcp.mjs`。{"\n"}
-            4. 安装 `sharp` 和 `fast-xml-parser`。{"\n"}
-            5. 使用已配置的 MCP URL 和 Token 运行脚本完成迁移。
-          </Text>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  </Modal>
-);
+          <GuideStep
+            title="1. 配置 EdgeEver MCP 服务"
+            body="在设置页打开“MCP 与 API Token”，创建包含笔记本、笔记、资源、标签读写权限的 Token，复制完整 MCP 配置并交给 AI 编程助手安装。"
+          />
+          <GuideStep
+            title="2. 发送完整迁移 Prompt"
+            body="让助手安装 evernote-backup，初始化印象笔记 china 后端数据库，同步并导出 ENEX，再下载 EdgeEver 迁移脚本执行导入。"
+          />
+          <GuideStep
+            title="3. 按需限定导入范围"
+            body="默认会全量迁移。只想导入部分笔记本时，让助手在导入命令后追加 --include 参数。"
+          />
+          <GuideStep
+            title="4. 回到 EdgeEver 验证"
+            body="导入完成后刷新客户端，检查笔记本组层级、笔记正文、图片资源、创建时间和修改时间是否正常。"
+          />
+
+          <View style={styles.promptCard}>
+            <View style={styles.promptCardHeader}>
+              <Text style={styles.panelValue}>可直接复制给 AI 助手的 Prompt</Text>
+              <ActionButton label={copiedValue === "prompt-card" ? "已复制" : "复制"} onPress={() => copyText(EVERNOTE_MIGRATION_PROMPT, "prompt-card")}>
+                {copiedValue === "prompt-card" ? <ShieldCheck color="#047857" size={16} /> : <Copy color="#0f172a" size={16} />}
+              </ActionButton>
+            </View>
+            <Text selectable style={styles.revisionPreviewText}>
+              {EVERNOTE_MIGRATION_PROMPT}
+            </Text>
+          </View>
+
+          <View style={styles.revisionPreviewBlock}>
+            <Text style={styles.label}>手动模式备用</Text>
+            <Text style={styles.revisionPreviewText}>
+              不使用 AI 助手时，可以手动下载迁移脚本并按脚本头部注释执行。脚本地址：
+            </Text>
+            <Text selectable style={styles.tokenValueText}>
+              {EVERNOTE_IMPORT_SCRIPT_URL}
+            </Text>
+            <View style={styles.tokenActionRow}>
+              <ActionButton label={copiedValue === "script-url" ? "已复制" : "复制地址"} onPress={() => copyText(EVERNOTE_IMPORT_SCRIPT_URL, "script-url")}>
+                {copiedValue === "script-url" ? <ShieldCheck color="#047857" size={16} /> : <Copy color="#0f172a" size={16} />}
+              </ActionButton>
+              <ActionButton label="打开" onPress={() => Linking.openURL(EVERNOTE_IMPORT_SCRIPT_URL)}>
+                <ExternalLink color="#0f172a" size={16} />
+              </ActionButton>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+};
 
 const AdvancedPlayModal = ({ onClose, visible }: { onClose: () => void; visible: boolean }) => {
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
