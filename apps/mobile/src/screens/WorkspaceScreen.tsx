@@ -3274,6 +3274,11 @@ const ResourcesModal = ({
   });
   const imageResources = filteredResources.filter((resource) => resource.kind === "image");
   const previewIndex = previewResource ? imageResources.findIndex((resource) => resource.id === previewResource.id) : -1;
+  const uploadTargetHint = !activeMemo
+    ? "打开一条笔记后可作为资源上传目标"
+    : activeMemo.isDeleted
+      ? "已删除笔记不能上传附件，请先恢复笔记"
+      : `当前笔记：${activeMemo.title?.trim() || activeMemo.excerpt || DEFAULT_MEMO_TITLE}；上传后会写入正文`;
   const handlePreviewStep = (direction: -1 | 1) => {
     if (previewIndex < 0 || imageResources.length < 2) {
       return;
@@ -3288,11 +3293,11 @@ const ResourcesModal = ({
   };
 
   return (
-    <Modal animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet" visible={visible}>
+    <Modal animationType="slide" onRequestClose={() => !uploadResourceMutation.isPending && onClose()} presentationStyle="pageSheet" visible={visible}>
       <SafeAreaView style={styles.modalSafeArea}>
         <View style={styles.modalHeader}>
-          <IconButton onPress={onClose}>
-            <X color="#0f172a" size={20} />
+          <IconButton disabled={uploadResourceMutation.isPending} onPress={onClose}>
+            <X color={uploadResourceMutation.isPending ? "#cbd5e1" : "#0f172a"} size={20} />
           </IconButton>
           <Text style={styles.modalTitle}>资源库</Text>
           <IconButton onPress={() => resourcesQuery.refetch()}>
@@ -3359,11 +3364,7 @@ const ResourcesModal = ({
           </Pressable>
           {uploadProgress ? <Text style={styles.assetsHint}>{uploadProgress}</Text> : null}
 
-          <Text style={styles.assetsHint}>
-            {activeMemo
-              ? `当前笔记：${activeMemo.title?.trim() || activeMemo.excerpt || DEFAULT_MEMO_TITLE}；上传后会写入正文`
-              : "打开一条笔记后可作为资源上传目标"}
-          </Text>
+          <Text style={styles.assetsHint}>{uploadTargetHint}</Text>
           {uploadResourceMutation.error ? (
             <Text style={styles.errorText}>{uploadResourceMutation.error instanceof Error ? uploadResourceMutation.error.message : "上传失败"}</Text>
           ) : null}
