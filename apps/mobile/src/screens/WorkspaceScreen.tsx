@@ -606,8 +606,17 @@ export const WorkspaceScreen = () => {
         throw new Error("Client is not ready");
       }
 
+      const editSessionResponse = payload.contentMarkdown !== undefined
+        ? await client.createMemoEditSession(memo.id)
+        : null;
       const response = await client.updateMemo(memo.id, {
         expectedRevision: memo.revision,
+        ...(editSessionResponse
+          ? {
+              expectedContentHash: memo.contentHash,
+              editSessionId: editSessionResponse.editSession.id,
+            }
+          : {}),
         ...payload,
       });
 
@@ -3285,9 +3294,12 @@ const ResourcesModal = ({
       }
 
       setUploadProgress("写入笔记正文");
+      const { editSession } = await client.createMemoEditSession(activeMemo.id);
       const { memo } = await client.updateMemo(activeMemo.id, {
         contentMarkdown: nextMarkdown,
         expectedRevision: activeMemo.revision,
+        expectedContentHash: activeMemo.contentHash,
+        editSessionId: editSession.id,
       });
 
       return { memo, resources };
@@ -4300,6 +4312,7 @@ const EditMemoModal = ({
           await queueMobileMemoUpdate({
             memoId: memo.id,
             expectedRevision: memo.revision,
+            expectedContentHash: memo.contentHash,
             title: title.trim() || DEFAULT_MEMO_TITLE,
             contentMarkdown,
             notebookId,

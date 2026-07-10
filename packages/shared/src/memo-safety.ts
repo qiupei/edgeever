@@ -10,3 +10,16 @@ export const isSuspiciousMemoOverwrite = (
 
   return titleChanged && currentLength >= 200 && nextLength < currentLength * 0.35;
 };
+
+export const isMemoEditBindingValid = (
+  current: { memoId: string; revision: number; contentHash: string },
+  session: { id: string; memoId: string; baseRevision: number; baseContentHash: string },
+  request: { editSessionId: string; memoId: string; expectedRevision: number; expectedContentHash: string }
+) =>
+  request.memoId === current.memoId &&
+  session.memoId === current.memoId &&
+  request.editSessionId === session.id &&
+  request.expectedRevision === current.revision &&
+  session.baseRevision === current.revision &&
+  request.expectedContentHash === current.contentHash &&
+  session.baseContentHash === current.contentHash;

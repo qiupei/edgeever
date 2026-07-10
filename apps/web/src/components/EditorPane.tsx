@@ -52,7 +52,7 @@ import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
 import { api } from "@/lib/api";
 import { consumeStandaloneMobileEditorReturn, openStandaloneMobileEditor } from "@/lib/mobile-editor";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
-import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
+import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type MemoEditSession, type TiptapDoc } from "@edgeever/shared";
 import { compressImageForUpload } from "@/lib/image-compression";
 import { localDb, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import { getMemoUpdateQueueId, queueMemoUpdate, shouldQueueMemoSaveError } from "@/lib/sync-queue";
@@ -493,6 +493,7 @@ const MobileNativeEditorPane = ({
   const draftTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const memoRef = useRef<MemoDetail | null>(memo);
+  const editSessionRef = useRef<MemoEditSession | null>(null);
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
   const hasUnsavedChangesRef = useRef(false);
   const hydratingRef = useRef(false);
@@ -554,7 +555,8 @@ const MobileNativeEditorPane = ({
     const currentMemo = memoRef.current;
     const snapshot = currentSnapshot();
 
-    if (!currentMemo || currentMemo.isDeleted || !snapshot || savingRef.current) {
+    const editSession = editSessionRef.current;
+    if (!currentMemo || currentMemo.isDeleted || !snapshot || savingRef.current || !editSession) {
       return false;
     }
 
@@ -566,6 +568,8 @@ const MobileNativeEditorPane = ({
     const payload: MemoUpdateSyncPayload = {
       memoId: currentMemo.id,
       expectedRevision: currentMemo.revision,
+      expectedContentHash: currentMemo.contentHash,
+      editSessionId: editSession.id,
       title: getTitleValue(),
       contentJson,
       tags: parseTagsText(getTagsValue()),
@@ -574,12 +578,19 @@ const MobileNativeEditorPane = ({
     try {
       const data = await api.updateMemo(currentMemo.id, {
         expectedRevision: payload.expectedRevision,
+        expectedContentHash: payload.expectedContentHash,
+        editSessionId: payload.editSessionId,
         title: payload.title,
         contentJson: payload.contentJson,
         tags: payload.tags,
       });
 
       memoRef.current = data.memo;
+      editSessionRef.current = {
+        ...editSession,
+        baseRevision: data.memo.revision,
+        baseContentHash: data.memo.contentHash,
+      };
       await onSaved(data.memo);
 
       if (currentSnapshot() === snapshot) {
@@ -682,6 +693,7 @@ const MobileNativeEditorPane = ({
   useEffect(() => {
     if (!memo) {
       memoRef.current = null;
+      editSessionRef.current = null;
       return;
     }
 
@@ -694,11 +706,12 @@ const MobileNativeEditorPane = ({
     }
 
     void (async () => {
-      const [draft, queuedUpdate] = memo.isDeleted
-        ? [null, null]
+      const [draft, queuedUpdate, editSessionResponse] = memo.isDeleted
+        ? [null, null, null]
         : await Promise.all([
             localDb.drafts.get(memo.id),
             localDb.syncQueue.get(getMemoUpdateQueueId(memo.id)),
+            api.createMemoEditSession(memo.id),
           ]);
 
       if (cancelled) {
@@ -711,6 +724,7 @@ const MobileNativeEditorPane = ({
       const nextTitle = useDraft && draft ? draft.title : memo.title ?? "";
       const nextTagsText = useDraft && draft ? draft.tagsText : memo.tags.join(", ");
       const nextContent = useDraft && draft ? draft.contentJson : memo.contentJson;
+      editSessionRef.current = editSessionResponse?.editSession ?? null;
 
       hydratingRef.current = true;
       editingMemoIdRef.current = memo.id;
@@ -1091,6 +1105,7 @@ const RichEditorPane = ({
   const useMobilePlainTextEditor = isMobileViewport && mobileEditingActive && !readOnly;
 
   const memoRef = useRef<MemoDetail | null>(memo);
+  const editSessionRef = useRef<MemoEditSession | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const mobileTextAreaRef = useRef<MobilePlainTextElement | null>(null);
   const mobileDraftTimerRef = useRef<number | null>(null);
@@ -1572,6 +1587,7 @@ const RichEditorPane = ({
 
     if (!memo) {
       memoRef.current = null;
+      editSessionRef.current = null;
       hydratedMemoIdRef.current = null;
       editingMemoIdRef.current = null;
       hasUnsavedChangesRef.current = false;
@@ -1599,11 +1615,12 @@ const RichEditorPane = ({
     }
 
     void (async () => {
-      const [draft, queuedUpdate] = memo.isDeleted
-        ? [null, null]
+      const [draft, queuedUpdate, editSessionResponse] = memo.isDeleted
+        ? [null, null, null]
         : await Promise.all([
             localDb.drafts.get(memo.id),
             localDb.syncQueue.get(getMemoUpdateQueueId(memo.id)),
+            api.createMemoEditSession(memo.id),
           ]);
 
       if (cancelled) {
@@ -1634,6 +1651,7 @@ const RichEditorPane = ({
       }
 
       hydratedMemoIdRef.current = memo.id;
+      editSessionRef.current = editSessionResponse?.editSession ?? null;
 
       window.setTimeout(() => {
         hydratingRef.current = false;
@@ -1718,8 +1736,9 @@ const RichEditorPane = ({
     mutationFn: async () => {
       const currentMemo = memoRef.current;
       const contentJson = getCurrentContentJson();
+      const editSession = editSessionRef.current;
 
-      if (!currentMemo || !contentJson || hydratedMemoIdRef.current !== currentMemo.id) {
+      if (!currentMemo || !contentJson || !editSession || hydratedMemoIdRef.current !== currentMemo.id) {
         throw new Error("No memo selected");
       }
 
@@ -1735,6 +1754,8 @@ const RichEditorPane = ({
       const payload: MemoUpdateSyncPayload = {
         memoId: currentMemo.id,
         expectedRevision: currentMemo.revision,
+        expectedContentHash: currentMemo.contentHash,
+        editSessionId: editSession.id,
         title,
         contentJson,
         tags: parseTagsText(tagsText),
@@ -1744,6 +1765,8 @@ const RichEditorPane = ({
       try {
         data = await api.updateMemo(currentMemo.id, {
           expectedRevision: payload.expectedRevision,
+          expectedContentHash: payload.expectedContentHash,
+          editSessionId: payload.editSessionId,
           title: payload.title,
           contentJson: payload.contentJson,
           tags: payload.tags,
@@ -1757,6 +1780,14 @@ const RichEditorPane = ({
     onMutate: () => setSaveState("saving"),
     onSuccess: async ({ memo: savedMemo, snapshot }) => {
       memoRef.current = savedMemo;
+      const currentEditSession = editSessionRef.current;
+      if (currentEditSession) {
+        editSessionRef.current = {
+          ...currentEditSession,
+          baseRevision: savedMemo.revision,
+          baseContentHash: savedMemo.contentHash,
+        };
+      }
 
       if (useMobilePlainTextEditor && isEditorReady(editorRef.current)) {
         hydratingRef.current = true;
