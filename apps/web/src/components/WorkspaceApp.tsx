@@ -27,7 +27,13 @@ import {
 import { MemoListPane, MemoSelectionActionBar } from "./MemoListPane";
 import { AppConfirmDialog, MemoDeleteConfirmDialog, NotebookNameDialog } from "./dialogs/ConfirmDialogs";
 import { api } from "@/lib/api";
-import { MOBILE_EDITOR_RETURN_PARAM, openStandaloneMobileEditor } from "@/lib/mobile-editor";
+import {
+  MOBILE_EDITOR_RETURN_PARAM,
+  clearMobileEditorReturnPreview,
+  openStandaloneMobileEditor,
+  readMobileEditorReturnPreview,
+  type MobileEditorReturnPreview,
+} from "@/lib/mobile-editor";
 import { cn } from "@/lib/utils";
 import { createExcerpt, docToText, type Notebook, type AuthUser, type MemoSummary, type MemoDetail } from "@edgeever/shared";
 import type {
@@ -795,6 +801,9 @@ export const WorkspaceApp = ({
   const [memoFilterMode, setMemoFilterMode] = useState<MemoFilterMode>("all");
   const [memoSortMode, setMemoSortMode] = useState<MemoSortMode>("updated-desc");
   const [syncSummary, setSyncSummary] = useState<SyncQueueSummary>(emptySyncQueueSummary);
+  const [mobileEditorReturnPreview, setMobileEditorReturnPreview] = useState<MobileEditorReturnPreview | null>(() =>
+    readMobileEditorReturnPreview(getMobileEditorReturnMemoId(location.search))
+  );
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [isDesktop, setIsDesktop] = useState(isDesktopViewport);
   const [isSyncingQueuedChanges, setIsSyncingQueuedChanges] = useState(false);
@@ -954,6 +963,12 @@ export const WorkspaceApp = ({
     const returnedMemoId = getMobileEditorReturnMemoId(location.search);
     if (!returnedMemoId) {
       return;
+    }
+
+    const returnPreview = readMobileEditorReturnPreview(returnedMemoId);
+    if (returnPreview) {
+      setMobileEditorReturnPreview(returnPreview);
+      clearMobileEditorReturnPreview(returnedMemoId);
     }
 
     skipNextHomeRouteSyncRef.current = false;
@@ -1252,12 +1267,26 @@ export const WorkspaceApp = ({
 
     for (const page of memosQuery.data?.pages ?? []) {
       for (const memo of page.memos) {
-        memoMap.set(memo.id, memo);
+        const shouldUseReturnPreview =
+          mobileEditorReturnPreview?.memoId === memo.id && memo.revision <= mobileEditorReturnPreview.baseRevision;
+
+        memoMap.set(
+          memo.id,
+          shouldUseReturnPreview
+            ? {
+                ...memo,
+                title: mobileEditorReturnPreview.title,
+                excerpt: mobileEditorReturnPreview.excerpt,
+                tags: mobileEditorReturnPreview.tags,
+                updatedAt: mobileEditorReturnPreview.updatedAt,
+              }
+            : memo
+        );
       }
     }
 
     return Array.from(memoMap.values());
-  }, [memosQuery.data?.pages]);
+  }, [memosQuery.data?.pages, mobileEditorReturnPreview]);
   const totalMemoCount = memosQuery.data?.pages[0]?.totalCount ?? memos.length;
   const handleLoadMoreMemos = useCallback(() => {
     if (!memosQuery.hasNextPage || memosQuery.isFetchingNextPage) {
