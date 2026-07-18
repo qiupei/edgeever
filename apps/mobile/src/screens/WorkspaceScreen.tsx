@@ -15,6 +15,7 @@ import {
   CheckSquare,
   Code,
   Copy,
+  Database,
   ExternalLink,
   FileArchive,
   FileSpreadsheet,
@@ -44,11 +45,13 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Tag,
   Trash2,
   Upload,
   UserRound,
+  Users,
   Video,
   X,
 } from "../components/icons";
@@ -284,6 +287,7 @@ const MAX_COMPRESSED_IMAGE_EDGE = 2560;
 const IMAGE_COMPRESSION_QUALITY = 0.82;
 
 type MobileView = "notes" | "search" | "account" | "settings";
+type SettingsTab = "general" | "users" | "data" | "ai" | "account";
 type MemoView = "notebook" | "trash";
 type MemoTemplate = {
   id: string;
@@ -338,6 +342,7 @@ export const WorkspaceScreen = () => {
   const [advancedPlayOpen, setAdvancedPlayOpen] = useState(false);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [accountSecurityOpen, setAccountSecurityOpen] = useState(false);
+  const [accountSecuritySection, setAccountSecuritySection] = useState<"password" | "users">("password");
   const [syncQueueOpen, setSyncQueueOpen] = useState(false);
   const [revisionMemo, setRevisionMemo] = useState<MemoDetail | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1120,27 +1125,23 @@ export const WorkspaceScreen = () => {
       {activeView === "account" ? <AccountView instance={session?.baseUrl ?? ""} userName={session?.user?.username ?? "owner"} onSignOut={signOut} /> : null}
       {activeView === "settings" ? (
         <SettingsView
-          instance={session?.baseUrl ?? ""}
-          userName={session?.user?.username ?? "owner"}
-          notebookCount={notebooks.length}
-          memoCount={memoCount}
           onOpenAdvancedPlay={() => setAdvancedPlayOpen(true)}
-          onOpenAccountSecurity={() => setAccountSecurityOpen(true)}
+          onClose={() => setActiveView("notes")}
+          onOpenPassword={() => {
+            setAccountSecuritySection("password");
+            setAccountSecurityOpen(true);
+          }}
+          onOpenUserManagement={() => {
+            setAccountSecuritySection("users");
+            setAccountSecurityOpen(true);
+          }}
           onOpenApiTokens={() => setApiTokensOpen(true)}
           onOpenEvernoteGuide={() => setEvernoteGuideOpen(true)}
-          onOpenNotebookManager={() => setNotebookManagerOpen(true)}
-          onOpenResources={() => setResourcesOpen(true)}
           onOpenSystemInfo={() => setSystemInfoOpen(true)}
-          onOpenTagsManager={() => setTagsManagerOpen(true)}
-          onOpenTemplates={() => setTemplatesOpen(true)}
-          onOpenSyncQueue={() => setSyncQueueOpen(true)}
-          onSyncQueuedChanges={handleSyncQueuedChanges}
-          syncQueueMessage={syncQueueMessage}
-          syncQueueSummary={syncQueueSummary}
-          isSyncingQueue={isSyncingQueue}
           localePreference={localePreference}
           onLocalePreferenceChange={handleLocalePreferenceChange}
           imageCompressionEnabled={imageCompressionEnabled}
+          isOwner={session?.user?.role === "owner"}
           onImageCompressionChange={handleImageCompressionChange}
           onSignOut={signOut}
         />
@@ -1209,7 +1210,7 @@ export const WorkspaceScreen = () => {
         visible
       /> : null}
       {systemInfoOpen ? <SystemInfoModal baseUrl={session?.baseUrl ?? ""} memoCount={memoCount} notebookCount={notebooks.length} onClose={() => setSystemInfoOpen(false)} visible /> : null}
-      {accountSecurityOpen ? <AccountSecurityModal currentUser={session?.user ?? null} onClose={() => setAccountSecurityOpen(false)} visible /> : null}
+      {accountSecurityOpen ? <AccountSecurityModal currentUser={session?.user ?? null} initialSection={accountSecuritySection} onClose={() => setAccountSecurityOpen(false)} visible /> : null}
       {revisionMemo ? <RevisionHistoryModal
         memo={revisionMemo}
         onClose={() => setRevisionMemo(null)}
@@ -1882,125 +1883,158 @@ const AccountInfoCopyRow = ({ instance, userName }: { instance: string; userName
 
 const SettingsView = ({
   imageCompressionEnabled,
-  instance,
-  isSyncingQueue,
+  isOwner,
   localePreference,
-  memoCount,
-  notebookCount,
+  onClose,
   onImageCompressionChange,
   onLocalePreferenceChange,
-  onOpenAccountSecurity,
   onOpenAdvancedPlay,
   onOpenApiTokens,
   onOpenEvernoteGuide,
-  onOpenNotebookManager,
-  onOpenResources,
+  onOpenPassword,
   onOpenSystemInfo,
-  onOpenSyncQueue,
-  onOpenTagsManager,
-  onOpenTemplates,
+  onOpenUserManagement,
   onSignOut,
-  onSyncQueuedChanges,
-  syncQueueMessage,
-  syncQueueSummary,
-  userName,
 }: {
   imageCompressionEnabled: boolean;
-  instance: string;
-  isSyncingQueue: boolean;
+  isOwner: boolean;
   localePreference: MobileLocaleMode;
-  memoCount: number;
-  notebookCount: number;
+  onClose: () => void;
   onImageCompressionChange: (enabled: boolean) => void;
   onLocalePreferenceChange: (locale: MobileLocaleMode) => void;
-  onOpenAccountSecurity: () => void;
   onOpenAdvancedPlay: () => void;
   onOpenApiTokens: () => void;
   onOpenEvernoteGuide: () => void;
-  onOpenNotebookManager: () => void;
-  onOpenResources: () => void;
+  onOpenPassword: () => void;
   onOpenSystemInfo: () => void;
-  onOpenSyncQueue: () => void;
-  onOpenTagsManager: () => void;
-  onOpenTemplates: () => void;
+  onOpenUserManagement: () => void;
   onSignOut: () => void;
-  onSyncQueuedChanges: () => void;
-  syncQueueMessage: string;
-  syncQueueSummary: MobileSyncQueueSummary;
-  userName: string;
-}) => (
-  <ScrollView contentContainerStyle={styles.panelList} style={styles.viewBody}>
-    <Text style={styles.sectionTitle}>我的</Text>
-    <PanelRow label="当前用户" value={userName} />
-    <PanelRow label="实例地址" value={instance} />
-    <AccountInfoCopyRow instance={instance} userName={userName} />
-    <Pressable onPress={onOpenAccountSecurity}>
-      <PanelRow label="账户与安全" value="修改密码、管理实例用户" />
-    </Pressable>
-    <Pressable onPress={onOpenNotebookManager}>
-      <PanelRow label="笔记本管理" value="创建、重命名、删除" />
-    </Pressable>
-    <Pressable onPress={onOpenTagsManager}>
-      <PanelRow label="标签管理" value="重命名、删除标签" />
-    </Pressable>
-    <Pressable onPress={onOpenResources}>
-      <PanelRow label="资源库" value="图片、附件、来源笔记" />
-    </Pressable>
-    <Pressable onPress={onOpenTemplates}>
-      <PanelRow label="模板" value="速记、会议、清单、读书、复盘" />
-    </Pressable>
-    <Pressable onPress={onOpenApiTokens}>
-      <PanelRow label="MCP 与 API Token" value="创建、复制、撤销 Token" />
-    </Pressable>
-    <Pressable onPress={onOpenEvernoteGuide}>
-      <PanelRow label="Evernote 导入指引" value="MCP 迁移流程与 Prompt" />
-    </Pressable>
-    <Pressable onPress={onOpenAdvancedPlay}>
-      <PanelRow label="进阶玩法" value="人物画像、知识图谱、标签建议 Prompt" />
-    </Pressable>
-    <Pressable onPress={onOpenSystemInfo}>
-      <PanelRow label="系统信息" value="版本、平台、实例、统计" />
-    </Pressable>
-    <PanelRow label="移动端形态" value="React Native" />
-    <PanelRow label="笔记本数量" value={String(notebookCount)} />
-    <PanelRow label="笔记总数" value={String(memoCount)} />
-    <View style={styles.panelRow}>
-      <View style={styles.preferenceStack}>
-        <View style={styles.preferenceText}>
-          <Text style={styles.panelLabel}>语言偏好</Text>
-          <Text style={styles.panelValue}>{getMobileLocalePreferenceLabel(localePreference)}</Text>
-          <Text style={styles.panelHint}>与 PWA 设置保持一致，可选择跟随系统、简体中文或 English。</Text>
-        </View>
-        <View style={styles.scopeGrid}>
-          {MOBILE_LOCALE_OPTIONS.map((option) => {
-            const selected = localePreference === option.value;
+}) => {
+  const [activeTab, setActiveTab] = useState<SettingsTab | null>(null);
+  const tabs: Array<{ key: SettingsTab; label: string; icon: ReactNode }> = [
+    { key: "general", label: "常规设置", icon: <SlidersHorizontal color="#059669" size={17} /> },
+    ...(isOwner ? [{ key: "users" as const, label: "成员管理", icon: <Users color="#059669" size={17} /> }] : []),
+    { key: "data", label: "数据管理", icon: <Database color="#059669" size={17} /> },
+    { key: "ai", label: "AI集成", icon: <Sparkles color="#059669" size={17} /> },
+    { key: "account", label: "登录设置", icon: <ShieldCheck color="#059669" size={17} /> },
+  ];
+  const title = tabs.find((tab) => tab.key === activeTab)?.label ?? "我的";
 
-            return (
-              <Pressable key={option.value} onPress={() => onLocalePreferenceChange(option.value)} style={[styles.scopePill, selected && styles.scopePillActive]}>
-                <Text style={[styles.scopePillText, selected && styles.scopePillTextActive]}>{option.label}</Text>
+  const renderContent = () => {
+    if (activeTab === "general") {
+      return (
+        <View style={styles.settingsDetailList}>
+          <SettingsGroup title="偏好设置" icon={<ImageIcon color="#047857" size={16} />}>
+            <View style={styles.settingsContentRow}>
+              <View style={styles.preferenceStack}>
+                <View style={styles.preferenceText}>
+                  <Text style={styles.settingsRowTitle}>界面语言</Text>
+                  <Text style={styles.settingsRowDescription}>切换产品界面的显示语言。</Text>
+                </View>
+                <View style={styles.scopeGrid}>
+                  {MOBILE_LOCALE_OPTIONS.map((option) => {
+                    const selected = localePreference === option.value;
+                    return (
+                      <Pressable key={option.value} onPress={() => onLocalePreferenceChange(option.value)} style={[styles.scopePill, selected && styles.scopePillActive]}>
+                        <Text style={[styles.scopePillText, selected && styles.scopePillTextActive]}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+            <View style={styles.settingsContentRow}>
+              <View style={styles.preferenceRow}>
+                <View style={styles.preferenceText}>
+                  <Text style={styles.settingsRowTitle}>压缩笔记内图片</Text>
+                  <Text style={styles.settingsRowDescription}>上传大图时在本地压缩，节省资源占用。</Text>
+                </View>
+                <Switch onValueChange={onImageCompressionChange} value={imageCompressionEnabled} />
+              </View>
+            </View>
+          </SettingsGroup>
+          <SettingsLinkGroup
+            description="查看当前应用版本、构建标识和运行环境。"
+            icon={<HardDrive color="#047857" size={16} />}
+            onPress={onOpenSystemInfo}
+            title="系统信息"
+          />
+        </View>
+      );
+    }
+    if (activeTab === "users") {
+      return <SettingsLinkGroup description="为家人或团队成员创建独立的个人笔记空间。实例不开放公开注册。" icon={<Users color="#047857" size={16} />} onPress={onOpenUserManagement} title="成员管理" />;
+    }
+    if (activeTab === "data") {
+      return <SettingsLinkGroup description="MCP 迁移流程与 Prompt。" icon={<FileArchive color="#047857" size={16} />} onPress={onOpenEvernoteGuide} title="Evernote 导入指引" />;
+    }
+    if (activeTab === "ai") {
+      return (
+        <View style={styles.settingsDetailList}>
+          <SettingsLinkGroup description="搭配 AI Agent 的进阶玩法。" icon={<Sparkles color="#047857" size={16} />} onPress={onOpenAdvancedPlay} title="进阶玩法" />
+          <SettingsLinkGroup description="让 AI Agent 可以读取和整理你的笔记。" icon={<KeyRound color="#047857" size={16} />} onPress={onOpenApiTokens} title="生成 MCP 配置" />
+        </View>
+      );
+    }
+    return (
+      <View style={styles.settingsDetailList}>
+        <SettingsLinkGroup description="修改后会保留当前设备登录，并退出其他设备上的登录会话。" icon={<ShieldCheck color="#047857" size={16} />} onPress={onOpenPassword} title="修改密码" />
+        <Pressable onPress={onSignOut} style={styles.settingsLogoutButton}>
+          <LogOut color="#ffffff" size={17} />
+          <Text style={styles.settingsLogoutText}>退出登录</Text>
+        </Pressable>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.settingsScreen}>
+      <View style={styles.settingsHeader}>
+        <Pressable accessibilityLabel="返回" onPress={() => activeTab ? setActiveTab(null) : onClose()} style={styles.settingsBackButton}>
+          <ChevronLeft color="#64748b" size={21} />
+        </Pressable>
+        <View style={styles.settingsHeaderTitle}>
+          {activeTab ? tabs.find((tab) => tab.key === activeTab)?.icon : <UserRound color="#047857" size={17} />}
+          <Text numberOfLines={1} style={styles.settingsTitle}>{title}</Text>
+        </View>
+        <View style={styles.settingsBackPlaceholder} />
+      </View>
+      <ScrollView contentContainerStyle={styles.settingsScrollContent} style={styles.viewBody}>
+        {activeTab === null ? (
+          <View style={styles.settingsMenu}>
+            {tabs.map((tab, index) => (
+              <Pressable key={tab.key} onPress={() => setActiveTab(tab.key)} style={[styles.settingsMenuRow, index > 0 && styles.settingsMenuRowBorder]}>
+                <View style={styles.settingsMenuLabel}>
+                  <View style={styles.settingsMenuIcon}>{tab.icon}</View>
+                  <Text style={styles.settingsMenuText}>{tab.label}</Text>
+                </View>
+                <ChevronRight color="#94a3b8" size={17} />
               </Pressable>
-            );
-          })}
-        </View>
-      </View>
+            ))}
+          </View>
+        ) : renderContent()}
+      </ScrollView>
     </View>
-    <View style={styles.panelRow}>
-      <View style={styles.preferenceRow}>
-        <View style={styles.preferenceText}>
-          <Text style={styles.panelLabel}>图片上传压缩</Text>
-          <Text style={styles.panelValue}>{imageCompressionEnabled ? "已开启" : "已关闭"}</Text>
-          <Text style={styles.panelHint}>开启后会把支持的图片压缩为 WebP，降低移动网络和存储占用。</Text>
-        </View>
-        <Switch onValueChange={onImageCompressionChange} value={imageCompressionEnabled} />
+  );
+};
+
+const SettingsGroup = ({ children, icon, title }: { children: ReactNode; icon?: ReactNode; title?: string }) => (
+  <View style={styles.settingsGroup}>
+    {title ? <View style={styles.settingsGroupHeader}>{icon}<Text style={styles.settingsGroupTitle}>{title}</Text></View> : null}
+    {children}
+  </View>
+);
+
+const SettingsLinkGroup = ({ description, icon, onPress, title }: { description: string; icon: ReactNode; onPress: () => void; title: string }) => (
+  <Pressable onPress={onPress} style={styles.settingsGroup}>
+    <View style={styles.settingsLinkHeader}>
+      <View style={styles.settingsLinkCopy}>
+        <View style={styles.settingsGroupHeader}>{icon}<Text style={styles.settingsGroupTitle}>{title}</Text></View>
+        <Text style={styles.settingsLinkDescription}>{description}</Text>
       </View>
+      <ChevronRight color="#94a3b8" size={17} />
     </View>
-    <SyncQueuePanel isSyncing={isSyncingQueue} message={syncQueueMessage} onOpen={onOpenSyncQueue} onSync={onSyncQueuedChanges} summary={syncQueueSummary} />
-    <PanelRow label="富文本编辑器" value="已接入 PWA TipTap WebView" />
-    <Pressable onPress={onSignOut} style={styles.dangerButton}>
-      <LogOut color="#b91c1c" size={18} />
-      <Text style={styles.dangerButtonText}>退出登录</Text>
-    </Pressable>
-  </ScrollView>
+  </Pressable>
 );
 
 const CreateMemoModal = ({
@@ -5811,9 +5845,6 @@ const getTokenScopeLabel = (scope: string) => {
   return labels[scope] ?? scope;
 };
 
-const getMobileLocalePreferenceLabel = (locale: MobileLocaleMode) =>
-  MOBILE_LOCALE_OPTIONS.find((option) => option.value === locale)?.label ?? "跟随系统";
-
 const getTextSearchMatches = (text: string, query: string) => {
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -6092,6 +6123,151 @@ const styles = StyleSheet.create({
   viewBody: {
     flex: 1,
     paddingBottom: 0,
+  },
+  settingsScreen: {
+    backgroundColor: "#f8fafc",
+    flex: 1,
+  },
+  settingsHeader: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    minHeight: 56,
+    paddingHorizontal: 12,
+  },
+  settingsBackButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  settingsBackPlaceholder: {
+    height: 36,
+    width: 36,
+  },
+  settingsHeaderTitle: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: 8,
+    justifyContent: "flex-start",
+  },
+  settingsTitle: {
+    color: "#0f172a",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  settingsScrollContent: {
+    padding: 16,
+    paddingBottom: 96,
+  },
+  settingsMenu: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  settingsMenuRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 64,
+    paddingHorizontal: 16,
+  },
+  settingsMenuRowBorder: {
+    borderTopColor: "#f1f5f9",
+    borderTopWidth: 1,
+  },
+  settingsMenuLabel: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  settingsMenuIcon: {
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    borderRadius: 8,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
+  settingsMenuText: {
+    color: "#1e293b",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  settingsDetailList: {
+    gap: 16,
+  },
+  settingsGroup: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  settingsGroupHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    padding: 16,
+  },
+  settingsGroupTitle: {
+    color: "#0f172a",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  settingsContentRow: {
+    borderTopColor: "#f1f5f9",
+    borderTopWidth: 1,
+    gap: 10,
+    minHeight: 64,
+    padding: 16,
+  },
+  settingsRowTitle: {
+    color: "#0f172a",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  settingsRowDescription: {
+    color: "#64748b",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  settingsLinkDescription: {
+    color: "#64748b",
+    fontSize: 12,
+    lineHeight: 17,
+    paddingHorizontal: 16,
+  },
+  settingsLinkHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingRight: 16,
+  },
+  settingsLinkCopy: {
+    flex: 1,
+    paddingBottom: 16,
+  },
+  settingsLogoutButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#e11d48",
+    borderRadius: 8,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 40,
+    paddingHorizontal: 14,
+  },
+  settingsLogoutText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "800",
   },
   iconButton: {
     alignItems: "center",
