@@ -1320,6 +1320,7 @@ export const WorkspaceScreen = () => {
 
       {notesActionsOpen ? <NotesActionsModal
         bottomOffset={52 + safeAreaInsets.bottom}
+        canEnterSelection={visibleMemos.length > 0}
         memoListDensity={memoListDensity}
         memoSortMode={memoSortMode}
         memoView={memoView}
@@ -1630,6 +1631,7 @@ const NotesView = ({
 
 const NotesActionsModal = ({
   bottomOffset,
+  canEnterSelection,
   isEmptyingTrash,
   listDescription,
   listTitle,
@@ -1649,6 +1651,7 @@ const NotesActionsModal = ({
   visible,
 }: {
   bottomOffset: number;
+  canEnterSelection: boolean;
   isEmptyingTrash: boolean;
   listDescription: string;
   listTitle: string;
@@ -1683,7 +1686,7 @@ const NotesActionsModal = ({
         <ScrollView contentContainerStyle={styles.listActionSheetContent} style={styles.listActionSheetScroll}>
           {!selectionMode ? (
             <>
-              <ActionSheetItem icon={<CheckSquare color="#0f172a" size={18} />} label="选择笔记" onPress={onEnterSelection} />
+              <ActionSheetItem compact disabled={!canEnterSelection} icon={<CheckSquare color="#0f172a" size={18} />} label="选择笔记" onPress={onEnterSelection} />
               <View style={styles.listActionDivider} />
             </>
           ) : null}
@@ -1706,14 +1709,14 @@ const NotesActionsModal = ({
           <SheetOptionRow active={memoSortMode === "created-desc"} label="创建时间" onPress={() => onSortModeChange("created-desc")} />
           <SheetOptionRow active={memoSortMode === "title-asc"} label="标题 A-Z" onPress={() => onSortModeChange("title-asc")} />
           <View style={styles.listActionDivider} />
-          <ActionSheetItem icon={<Tag color="#0f172a" size={18} />} label="标签" onPress={onOpenTags} />
-          <ActionSheetItem icon={<Archive color="#0f172a" size={18} />} label="附件" onPress={onOpenResources} />
+          <ActionSheetItem compact icon={<Tag color="#0f172a" size={18} />} label="标签" onPress={onOpenTags} />
+          <ActionSheetItem compact icon={<Archive color="#0f172a" size={18} />} label="附件" onPress={onOpenResources} />
           {memoView === "trash" ? (
-            <ActionSheetItem danger disabled={isEmptyingTrash} icon={<Trash2 color="#b91c1c" size={18} />} label={isEmptyingTrash ? "清空中" : "清空回收站"} onPress={onEmptyTrash} />
+            <ActionSheetItem compact danger disabled={isEmptyingTrash} icon={<Trash2 color="#b91c1c" size={18} />} label={isEmptyingTrash ? "清空中" : "清空回收站"} onPress={onEmptyTrash} />
           ) : (
-            <ActionSheetItem icon={<Trash2 color="#0f172a" size={18} />} label="回收站" onPress={onToggleTrash} />
+            <ActionSheetItem compact icon={<Trash2 color="#0f172a" size={18} />} label="回收站" onPress={onToggleTrash} />
           )}
-          <ActionSheetItem icon={<KeyRound color="#0f172a" size={18} />} label="MCP Token" onPress={onOpenApiTokens} />
+          <ActionSheetItem compact icon={<KeyRound color="#0f172a" size={18} />} label="MCP Token" onPress={onOpenApiTokens} />
         </ScrollView>
       </Pressable>
     </Pressable>
@@ -1746,6 +1749,7 @@ const NotebookPickerModal = ({
   visible: boolean;
 }) => {
   const { translate } = useMobileLocale();
+  const safeAreaInsets = useSafeAreaInsets();
   const [searchText, setSearchText] = useState("");
   const [collapsedNotebookIds, setCollapsedNotebookIds] = useState<Set<string>>(() => new Set());
   const notebookOptions = flattenNotebooks(notebooks, notebookSortMode);
@@ -1788,28 +1792,29 @@ const NotebookPickerModal = ({
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
       <Pressable onPress={onClose} style={styles.actionSheetBackdrop}>
-        <Pressable style={[styles.actionSheet, styles.notebookPickerSheet]}>
+        <Pressable style={[styles.actionSheet, styles.notebookPickerSheet, { paddingBottom: Math.max(8, safeAreaInsets.bottom) }]}>
           <View style={styles.actionSheetHandle} />
           <View style={styles.notebookPickerHeader}>
             <View style={styles.notebookPickerHeaderText}>
               <Text style={styles.actionSheetTitle}>切换笔记本</Text>
               <Text style={styles.panelLabel}>{translate(`当前：${activeNotebookName}`)}</Text>
             </View>
-            <IconButton accessibilityLabel="关闭" onPress={onClose}>
+            <Pressable accessibilityLabel="关闭" accessibilityRole="button" onPress={onClose} style={styles.notebookPickerCloseButton}>
               <X color="#0f172a" size={20} />
-            </IconButton>
+            </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={styles.editorForm} style={styles.notebookPickerScroll}>
-          <View style={styles.searchBox}>
+          <ScrollView contentContainerStyle={styles.notebookPickerContent} style={styles.notebookPickerScroll}>
+          <View style={styles.notebookPickerSearchBox}>
             <Search color="#64748b" size={18} />
             <TextInput
+              accessibilityLabel="搜索笔记本"
               autoCapitalize="none"
               autoCorrect={false}
               onChangeText={setSearchText}
               placeholder="搜索笔记本"
               placeholderTextColor="#94a3b8"
-              style={styles.searchInput}
+              style={styles.notebookPickerSearchInput}
               value={searchText}
             />
             {searchText ? (
@@ -1819,7 +1824,13 @@ const NotebookPickerModal = ({
             ) : null}
           </View>
 
-          <Pressable onPress={() => onSelect(ALL_NOTES_ID)} style={[styles.moveNotebookRow, activeNotebookId === ALL_NOTES_ID && styles.moveNotebookRowActive]}>
+          <Pressable
+            accessibilityLabel={activeNotebookId === ALL_NOTES_ID ? "当前：全部笔记" : "切换到全部笔记"}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeNotebookId === ALL_NOTES_ID }}
+            onPress={() => onSelect(ALL_NOTES_ID)}
+            style={[styles.notebookPickerRow, styles.notebookPickerAllRow, activeNotebookId === ALL_NOTES_ID && styles.notebookPickerRowActive]}
+          >
             <View style={styles.moveNotebookText}>
               <Text numberOfLines={1} style={styles.panelValue}>
                 全部笔记
@@ -1844,16 +1855,28 @@ const NotebookPickerModal = ({
           {visibleNotebookOptions.map(({ depth, notebook }) => (
             <View
               key={notebook.id}
-              style={[styles.moveNotebookRow, activeNotebookId === notebook.id && styles.moveNotebookRowActive, depth > 0 && { marginLeft: Math.min(depth * 14, 42) }]}
+              style={[styles.notebookPickerRow, activeNotebookId === notebook.id && styles.notebookPickerRowActive, depth > 0 && { marginLeft: Math.min(depth * 18, 54) }]}
             >
               {childNotebookIds.has(notebook.id) && !searchQuery ? (
-                <Pressable accessibilityRole="button" onPress={() => toggleNotebookCollapsed(notebook.id)} style={styles.notebookTreeToggle}>
+                <Pressable
+                  accessibilityLabel={`${collapsedNotebookIds.has(notebook.id) ? "展开" : "收起"} ${notebook.name}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: !collapsedNotebookIds.has(notebook.id) }}
+                  onPress={() => toggleNotebookCollapsed(notebook.id)}
+                  style={styles.notebookTreeToggle}
+                >
                   {collapsedNotebookIds.has(notebook.id) ? <ChevronRight color="#64748b" size={17} /> : <ChevronDown color="#64748b" size={17} />}
                 </Pressable>
               ) : (
                 <View style={styles.notebookTreeTogglePlaceholder} />
               )}
-              <Pressable onPress={() => onSelect(notebook.id)} style={styles.moveNotebookSelectArea}>
+              <Pressable
+                accessibilityLabel={`${activeNotebookId === notebook.id ? "当前" : "切换到"} ${notebook.name}`}
+                accessibilityRole="button"
+                accessibilityState={{ selected: activeNotebookId === notebook.id }}
+                onPress={() => onSelect(notebook.id)}
+                style={styles.moveNotebookSelectArea}
+              >
                 <Text numberOfLines={1} style={styles.panelValue}>
                   {notebook.name}
                 </Text>
@@ -1927,10 +1950,10 @@ const MemoActionsModal = ({
   </Modal>
 );
 
-const ActionSheetItem = ({ danger = false, disabled = false, icon, label, onPress }: { danger?: boolean; disabled?: boolean; icon: ReactNode; label: string; onPress: () => void }) => (
-  <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.actionSheetItem, disabled && styles.buttonDisabled]}>
+const ActionSheetItem = ({ compact = false, danger = false, disabled = false, icon, label, onPress }: { compact?: boolean; danger?: boolean; disabled?: boolean; icon: ReactNode; label: string; onPress: () => void }) => (
+  <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.actionSheetItem, compact && styles.actionSheetItemCompact, disabled && styles.buttonDisabled]}>
     {icon}
-    <Text style={[styles.actionSheetItemText, danger && styles.actionSheetItemTextDanger]}>{label}</Text>
+    <Text style={[styles.actionSheetItemText, compact && styles.actionSheetItemTextCompact, danger && styles.actionSheetItemTextDanger]}>{label}</Text>
   </Pressable>
 );
 
@@ -5882,36 +5905,53 @@ const MemoCard = memo(function MemoCard({
   selectionMode?: boolean;
 }) {
   const localePreference = useMobileLocalePreference();
+  const memoTitle = memo.title?.trim() || DEFAULT_MEMO_TITLE;
 
   return (
-    <Pressable onLongPress={onLongPress} onPress={onPress} style={[styles.memoCard, listDensity === "compact" && styles.memoCardCompact, selected && styles.memoCardSelected]}>
-      <View style={styles.memoCardTop}>
-        {selectionMode ? (
+    <View style={[styles.memoCard, listDensity === "compact" && styles.memoCardCompact, selected && styles.memoCardSelected]}>
+      {selectionMode ? (
+        <Pressable
+          accessibilityLabel={`${selected ? "取消选择" : "选择"} ${memoTitle}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected }}
+          onPress={onPress}
+          style={styles.memoSelectionButton}
+        >
           <View style={[styles.selectionIndicator, selected && styles.selectionIndicatorActive]}>
             {selected ? <Check color="#ffffff" size={14} /> : null}
           </View>
-        ) : null}
-        {memo.isPinned ? (
-          <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.memoPinnedStar}>★</Text>
-        ) : null}
-        <Text numberOfLines={1} style={styles.memoTitle}>
-          {memo.title?.trim() || DEFAULT_MEMO_TITLE}
-        </Text>
-      </View>
-      {listDensity === "preview" ? (
-        <Text numberOfLines={2} style={styles.memoExcerpt}>
-          {memo.excerpt || "没有正文预览"}
-        </Text>
+        </Pressable>
       ) : null}
-      <View style={[styles.memoMeta, listDensity === "compact" && styles.memoMetaCompact]}>
-        <Text style={styles.memoDate}>{formatMemoPreviewDate(memo.updatedAt, localePreference)}</Text>
-        {memo.tags.slice(0, 3).map((tag) => (
-          <Text key={tag} style={styles.tag}>
-            #{tag}
+      <Pressable
+        accessibilityLabel={memoTitle}
+        accessibilityRole="button"
+        onLongPress={onLongPress}
+        onPress={onPress}
+        style={[styles.memoCardContent, listDensity === "compact" && styles.memoCardContentCompact, selectionMode && styles.memoCardContentWithSelection]}
+      >
+        <View style={styles.memoCardTop}>
+          {memo.isPinned ? (
+            <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.memoPinnedStar}>★</Text>
+          ) : null}
+          <Text numberOfLines={1} style={styles.memoTitle}>
+            {memoTitle}
           </Text>
-        ))}
-      </View>
-    </Pressable>
+        </View>
+        {listDensity === "preview" ? (
+          <Text numberOfLines={2} style={styles.memoExcerpt}>
+            {memo.excerpt || "没有正文预览"}
+          </Text>
+        ) : null}
+        <View style={[styles.memoMeta, listDensity === "compact" && styles.memoMetaCompact]}>
+          <Text style={styles.memoDate}>{formatMemoPreviewDate(memo.updatedAt, localePreference)}</Text>
+          {memo.tags.slice(0, 3).map((tag) => (
+            <Text key={tag} style={styles.tag}>
+              #{tag}
+            </Text>
+          ))}
+        </View>
+      </Pressable>
+    </View>
   );
 }, (previous, next) =>
   previous.memo === next.memo &&
@@ -7617,22 +7657,40 @@ const baseWorkspaceStyles = StyleSheet.create({
     paddingVertical: 34,
   },
   memoCard: {
+    alignItems: "stretch",
     backgroundColor: "#ffffff",
     borderColor: "#f1f5f9",
     borderRadius: 8,
     borderWidth: 1,
+    flexDirection: "row",
     marginBottom: 12,
     minHeight: 132,
-    padding: 16,
+    overflow: "hidden",
   },
   memoCardCompact: {
     marginBottom: 10,
     minHeight: 84,
-    padding: 13,
   },
   memoCardSelected: {
     backgroundColor: "#f8fafc",
-    borderColor: "#0f172a",
+    borderColor: "#e2e8f0",
+  },
+  memoCardContent: {
+    flex: 1,
+    minWidth: 0,
+    padding: 16,
+  },
+  memoCardContentCompact: {
+    padding: 13,
+  },
+  memoCardContentWithSelection: {
+    paddingLeft: 12,
+  },
+  memoSelectionButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+    width: 44,
   },
   memoCardTop: {
     alignItems: "center",
@@ -7642,11 +7700,11 @@ const baseWorkspaceStyles = StyleSheet.create({
   selectionIndicator: {
     alignItems: "center",
     borderColor: "#cbd5e1",
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    height: 20,
+    height: 24,
     justifyContent: "center",
-    width: 20,
+    width: 24,
   },
   selectionIndicatorActive: {
     backgroundColor: "#0f172a",
@@ -8265,8 +8323,8 @@ const baseWorkspaceStyles = StyleSheet.create({
   listActionSheet: {
     backgroundColor: "#ffffff",
     borderRadius: 10,
-    marginHorizontal: 8,
-    maxHeight: "76%",
+    marginHorizontal: 12,
+    maxHeight: "82%",
     overflow: "hidden",
     paddingBottom: 8,
     paddingTop: 8,
@@ -8297,7 +8355,7 @@ const baseWorkspaceStyles = StyleSheet.create({
     borderBottomColor: "#e2e8f0",
     borderBottomWidth: 1,
     flexDirection: "row",
-    minHeight: 52,
+    minHeight: 48,
     paddingHorizontal: 12,
   },
   listActionSheetHeaderText: {
@@ -8329,6 +8387,7 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   notebookPickerSheet: {
     maxHeight: "82%",
+    paddingBottom: 8,
     paddingHorizontal: 0,
   },
   notebookPickerHeader: {
@@ -8337,18 +8396,26 @@ const baseWorkspaceStyles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingBottom: 12,
+    minHeight: 56,
     paddingHorizontal: 16,
   },
   notebookPickerHeaderText: {
     flex: 1,
     gap: 2,
   },
+  notebookPickerCloseButton: {
+    alignItems: "center",
+    borderRadius: 6,
+    height: 32,
+    justifyContent: "center",
+    width: 32,
+  },
   notebookPickerSectionHeader: {
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "space-between",
-    minHeight: 36,
+    minHeight: 32,
+    paddingHorizontal: 12,
   },
   notebookPickerToggleAll: {
     borderRadius: 6,
@@ -8362,6 +8429,41 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   notebookPickerScroll: {
     flexShrink: 1,
+  },
+  notebookPickerContent: {
+    padding: 8,
+  },
+  notebookPickerSearchBox: {
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
+    borderRadius: 6,
+    flexDirection: "row",
+    gap: 8,
+    height: 36,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+  },
+  notebookPickerSearchInput: {
+    color: "#0f172a",
+    flex: 1,
+    fontSize: 14,
+    height: 36,
+    paddingVertical: 0,
+  },
+  notebookPickerRow: {
+    alignItems: "center",
+    backgroundColor: "transparent",
+    borderRadius: 6,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 12,
+  },
+  notebookPickerAllRow: {
+    marginBottom: 4,
+  },
+  notebookPickerRowActive: {
+    backgroundColor: "#f1f5f9",
   },
   actionSheetHandle: {
     alignSelf: "center",
@@ -8380,7 +8482,7 @@ const baseWorkspaceStyles = StyleSheet.create({
   actionSheetSectionTitle: {
     color: "#64748b",
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
@@ -8393,10 +8495,16 @@ const baseWorkspaceStyles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 12,
   },
+  actionSheetItemCompact: {
+    minHeight: 44,
+  },
   actionSheetItemText: {
     color: "#0f172a",
     fontSize: 14,
     fontWeight: "800",
+  },
+  actionSheetItemTextCompact: {
+    fontWeight: "500",
   },
   actionSheetItemTextDanger: {
     color: "#b91c1c",
@@ -8410,7 +8518,7 @@ const baseWorkspaceStyles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   sheetOptionRowActive: {
-    backgroundColor: "#ecfdf5",
+    backgroundColor: "rgb(236, 253, 245)",
   },
   sheetOptionIcon: {
     alignItems: "center",
@@ -8421,10 +8529,10 @@ const baseWorkspaceStyles = StyleSheet.create({
     color: "#0f172a",
     flex: 1,
     fontSize: 14,
-    fontWeight: "700",
+    fontWeight: "500",
   },
   sheetOptionLabelActive: {
-    color: "#047857",
+    color: "rgb(4, 120, 87)",
   },
   sheetOptionCheck: {
     alignItems: "center",
