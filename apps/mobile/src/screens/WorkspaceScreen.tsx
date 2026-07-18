@@ -1149,11 +1149,12 @@ export const WorkspaceScreen = () => {
 
       {activeView === "search" ? (
         <SearchView
-          error={searchQuery.error}
-          isError={searchQuery.isError}
-          isLoading={searchQuery.isLoading}
-          isLoadingMore={searchQuery.isFetchingNextPage}
+          error={searchText.trim() ? searchQuery.error : memosQuery.error}
+          isError={searchText.trim() ? searchQuery.isError : memosQuery.isError}
+          isLoading={searchText.trim() ? searchQuery.isLoading : memosQuery.isLoading}
+          isLoadingMore={searchText.trim() ? searchQuery.isFetchingNextPage : memosQuery.isFetchingNextPage}
           isRefreshing={isRefreshing}
+          listDensity={memoListDensity}
           onClose={() => {
             setSearchText("");
             setActiveView("notes");
@@ -1161,14 +1162,17 @@ export const WorkspaceScreen = () => {
           onMemoPress={handleSearchMemoPress}
           onRefresh={refresh}
           onLoadMore={() => {
-            if (searchQuery.hasNextPage && !searchQuery.isFetchingNextPage) {
-              void searchQuery.fetchNextPage();
+            const query = searchText.trim() ? searchQuery : memosQuery;
+            if (query.hasNextPage && !query.isFetchingNextPage) {
+              void query.fetchNextPage();
             }
           }}
-          results={searchResults}
+          results={searchText.trim() ? searchResults : memos}
           searchText={searchText}
           setSearchText={setSearchText}
-          totalCount={searchQuery.data?.pages[0]?.totalCount ?? searchResults.length}
+          totalCount={searchText.trim()
+            ? searchQuery.data?.pages[0]?.totalCount ?? searchResults.length
+            : memosQuery.data?.pages[0]?.totalCount ?? memos.length}
         />
       ) : null}
 
@@ -1228,6 +1232,7 @@ export const WorkspaceScreen = () => {
         <EditorRuntimePrewarm
           dom={{
             bounces: false,
+            containerStyle: styles.editorRuntimePrewarm,
             scrollEnabled: false,
             style: styles.editorRuntimePrewarm,
           }}
@@ -1885,6 +1890,7 @@ const SearchView = ({
   isLoading,
   isLoadingMore,
   isRefreshing,
+  listDensity,
   onClose,
   onMemoPress,
   onLoadMore,
@@ -1899,6 +1905,7 @@ const SearchView = ({
   isLoading: boolean;
   isLoadingMore: boolean;
   isRefreshing: boolean;
+  listDensity: MobileMemoListDensity;
   onClose: () => void;
   onMemoPress: (memo: MemoSummary) => void;
   onLoadMore: () => void;
@@ -1909,61 +1916,57 @@ const SearchView = ({
   totalCount: number;
 }) => (
   <View style={styles.viewBody}>
-    <View style={styles.searchHeader}>
-      <View style={styles.searchTitleRow}>
-        <Text style={styles.sectionTitle}>搜索</Text>
-        <IconButton accessibilityLabel="关闭搜索" onPress={onClose}>
-          <X color="#0f172a" size={20} />
-        </IconButton>
+    <View style={styles.mobileSearchActiveHeader}>
+      <View style={styles.mobileSearchActiveRow}>
+        <Pressable accessibilityLabel="退出搜索" accessibilityRole="button" onPress={onClose} style={styles.mobileSearchBackButton}>
+          <ChevronLeft color="#64748b" size={20} />
+        </Pressable>
+        <View style={[styles.mobileSearchActiveBox, Boolean(searchText.trim()) && styles.mobileSearchActiveBoxQuery]}>
+          <Search color={searchText.trim() ? "#059669" : "#64748b"} size={17} />
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus
+            onChangeText={setSearchText}
+            placeholder="搜索笔记"
+            placeholderTextColor="#94a3b8"
+            returnKeyType="search"
+            style={styles.mobileSearchActiveInput}
+            value={searchText}
+          />
+          {searchText ? (
+            <Pressable accessibilityLabel="清空搜索" accessibilityRole="button" onPress={() => setSearchText("")} style={styles.mobileSearchClearButton}>
+              <X color="#64748b" size={15} />
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable accessibilityLabel="取消搜索" accessibilityRole="button" onPress={onClose} style={styles.mobileSearchCancelButton}>
+          <Text style={styles.mobileSearchCancelText}>取消</Text>
+        </Pressable>
       </View>
-      <View style={styles.searchBox}>
-        <Search color="#64748b" size={18} />
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={setSearchText}
-          placeholder="搜索标题、正文或标签"
-          placeholderTextColor="#94a3b8"
-          style={styles.searchInput}
-          value={searchText}
-        />
-        {searchText ? (
-          <Pressable accessibilityLabel="清空搜索" accessibilityRole="button" onPress={() => setSearchText("")}>
-            <X color="#64748b" size={18} />
-          </Pressable>
-        ) : null}
-      </View>
-      {searchText.trim() ? <Text style={styles.sectionSubtitle}>{totalCount} 条结果</Text> : null}
+      {searchText.trim() ? <Text style={styles.mobileSearchResultCount}>正在搜索 · {totalCount} 条结果</Text> : null}
     </View>
 
-    {searchText.trim() ? (
-      <MemoList
-        emptyDescription="换个关键词再试"
-        emptyTitle="没有找到匹配笔记"
-        error={error}
-        isError={isError}
-        isLoading={isLoading}
-        isLoadingMore={isLoadingMore}
-        isRefreshing={isRefreshing}
-        listDensity="preview"
-        memos={results}
-        onMemoPress={(memoId) => {
-          const memo = results.find((item) => item.id === memoId);
-          if (memo) {
-            onMemoPress(memo);
-          }
-        }}
-        onLoadMore={onLoadMore}
-        onRefresh={onRefresh}
-        onRetry={onRefresh}
-      />
-    ) : (
-      <View style={styles.centerState}>
-        <Search color="#94a3b8" size={32} />
-        <Text style={styles.emptyTitle}>输入关键词开始搜索</Text>
-        <Text style={styles.mutedText}>搜索本机同步缓存，结果会即时显示</Text>
-      </View>
-    )}
+    <MemoList
+      emptyDescription="换个关键词再试"
+      emptyTitle="没有找到匹配笔记"
+      error={error}
+      isError={isError}
+      isLoading={isLoading}
+      isLoadingMore={isLoadingMore}
+      isRefreshing={isRefreshing}
+      listDensity={listDensity}
+      memos={results}
+      onMemoPress={(memoId) => {
+        const memo = results.find((item) => item.id === memoId);
+        if (memo) {
+          onMemoPress(memo);
+        }
+      }}
+      onLoadMore={onLoadMore}
+      onRefresh={onRefresh}
+      onRetry={onRefresh}
+    />
   </View>
 );
 
@@ -5302,6 +5305,7 @@ const MemoList = ({
       onEndReachedThreshold={0.35}
       removeClippedSubviews={Platform.OS === "android"}
       refreshControl={<RefreshControl onRefresh={onRefresh} refreshing={isRefreshing} tintColor="#0f172a" />}
+      style={styles.memoList}
       renderItem={({ item }) => (
         <MemoCard
           memo={item}
@@ -7033,6 +7037,75 @@ const baseWorkspaceStyles = StyleSheet.create({
     color: "#64748b",
     fontSize: 14,
   },
+  mobileSearchActiveHeader: {
+    backgroundColor: "#f8fafc",
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    gap: 8,
+    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  mobileSearchActiveRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 40,
+  },
+  mobileSearchBackButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  mobileSearchActiveBox: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    gap: 8,
+    height: 36,
+    paddingHorizontal: 12,
+  },
+  mobileSearchActiveBoxQuery: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#10b981",
+  },
+  mobileSearchActiveInput: {
+    color: "#0f172a",
+    flex: 1,
+    fontSize: 14,
+    height: 36,
+    paddingVertical: 0,
+  },
+  mobileSearchClearButton: {
+    alignItems: "center",
+    height: 28,
+    justifyContent: "center",
+    width: 28,
+  },
+  mobileSearchCancelButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    height: 36,
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  mobileSearchCancelText: {
+    color: "#475569",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  mobileSearchResultCount: {
+    color: "#047857",
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 44,
+  },
   mobileFilterButton: {
     alignItems: "center",
     backgroundColor: "#ffffff",
@@ -7233,6 +7306,9 @@ const baseWorkspaceStyles = StyleSheet.create({
     paddingBottom: 18,
     paddingHorizontal: 12,
     paddingTop: 12,
+  },
+  memoList: {
+    flex: 1,
   },
   listLoadingFooter: {
     marginVertical: 18,
