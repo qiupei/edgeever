@@ -1077,9 +1077,12 @@ export const WorkspaceScreen = () => {
       {richEditingMemo ? <RichEditorModal
         baseUrl={session?.baseUrl ?? ""}
         imageCompressionEnabled={imageCompressionEnabled}
+        isDeleting={deleteMemoMutation.isPending}
         memo={richEditingMemo}
         notebooks={notebooks}
         onClose={closeRichEditor}
+        onDelete={handleDeleteMemo}
+        onOpenRevisions={setRevisionMemo}
         updateMutation={localUpdateMemoMutation}
       /> : null}
       {editorRuntimeWarm ? (
@@ -3957,16 +3960,22 @@ const HighlightedDetailText = ({
 const RichEditorModal = ({
   baseUrl,
   imageCompressionEnabled,
+  isDeleting,
   memo,
   notebooks,
   onClose,
+  onDelete,
+  onOpenRevisions,
   updateMutation,
 }: {
   baseUrl: string;
   imageCompressionEnabled: boolean;
+  isDeleting: boolean;
   memo: MemoDetail | null;
   notebooks: Notebook[];
   onClose: () => void;
+  onDelete: (memo: MemoDetail) => void;
+  onOpenRevisions: (memo: MemoDetail) => void;
   updateMutation: MobileMemoUpdateMutation;
 }) => {
   const { client } = useSession();
@@ -3994,6 +4003,13 @@ const RichEditorModal = ({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [startupMs, setStartupMs] = useState<number | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchReplacement, setSearchReplacement] = useState("");
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const notebookLabel = notebooks.find((notebook) => notebook.id === notebookId)?.name ?? "未分类";
   const saveLabel = error ? "保存失败" : saving ? "保存中" : uploading ? "上传中" : dirty ? (draftRestored ? "本地草稿" : "未保存") : ready ? "已保存" : "加载中";
   const titleRef = useRef(title);
@@ -4020,6 +4036,13 @@ const RichEditorModal = ({
     uploadingRef.current = false;
     setError(null);
     setStartupMs(null);
+    setActionsOpen(false);
+    setSearchOpen(false);
+    setReplaceOpen(false);
+    setSearchQuery("");
+    setSearchReplacement("");
+    setSearchMatchCount(0);
+    setActiveSearchIndex(0);
 
     void readMobileMemoDraft(memo.id).then((draft) => {
       if (!active) {
@@ -4202,6 +4225,41 @@ const RichEditorModal = ({
     return pending;
   }, [client]);
 
+  const runEditorSearch = useCallback((query: string, index: number) => {
+    editorRef.current?.search(query, index);
+  }, []);
+
+  const openEditorSearch = (showReplace: boolean) => {
+    setActionsOpen(false);
+    setSearchOpen(true);
+    setReplaceOpen(showReplace);
+    runEditorSearch(searchQuery, 0);
+  };
+
+  const moveEditorSearch = (direction: 1 | -1) => {
+    if (searchMatchCount === 0) {
+      return;
+    }
+    const nextIndex = (activeSearchIndex + direction + searchMatchCount) % searchMatchCount;
+    setActiveSearchIndex(nextIndex);
+    runEditorSearch(searchQuery, nextIndex);
+  };
+
+  const replaceAllEditorMatches = () => {
+    if (searchMatchCount === 0) {
+      return;
+    }
+    editorRef.current?.replaceAll(searchQuery, searchReplacement);
+  };
+
+  useEffect(() => {
+    if (!ready || !searchOpen) {
+      return;
+    }
+    const timeout = setTimeout(() => runEditorSearch(searchQuery, 0), 80);
+    return () => clearTimeout(timeout);
+  }, [ready, runEditorSearch, searchOpen, searchQuery]);
+
   const editorElement = useMemo(
     () => memo && baseUrl && draftLoaded ? (
       <LocalTiptapEditor
@@ -4228,6 +4286,10 @@ const RichEditorModal = ({
             initialFocusTimerRef.current = null;
             editorRef.current?.focusEnd();
           }, 160);
+        }}
+        onSearchResult={async (count, index) => {
+          setSearchMatchCount(count);
+          setActiveSearchIndex(index);
         }}
         ref={editorRef}
         locale={resolvedLocale}
@@ -4283,6 +4345,9 @@ const RichEditorModal = ({
             >
               {saving ? <ActivityIndicator color="#64748b" size="small" /> : <Text style={[styles.createMemoDoneText, (uploading || !ready) && styles.createMemoDoneTextDisabled]}>完成</Text>}
             </Pressable>
+            <Pressable accessibilityLabel="笔记更多操作" accessibilityRole="button" disabled={!ready} onPress={() => setActionsOpen(true)} style={styles.detailHeaderIconButton}>
+              <MoreHorizontal color={ready ? "#475569" : "#cbd5e1"} size={21} />
+            </Pressable>
           </View>
         </View>
 
@@ -4317,6 +4382,63 @@ const RichEditorModal = ({
                 value={tagsText}
               />
             </View>
+            {searchOpen ? (
+              <View style={styles.richEditorSearchPanel}>
+                <View style={styles.searchBox}>
+                  <Search color="#64748b" size={18} />
+                  <TextInput
+                    accessibilityLabel="在当前笔记内搜索"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    onChangeText={setSearchQuery}
+                    placeholder="在当前笔记内搜索"
+                    placeholderTextColor="#94a3b8"
+                    style={styles.searchInput}
+                    value={searchQuery}
+                  />
+                  <Text style={[styles.noteSearchCount, searchQuery.trim() && searchMatchCount === 0 && styles.noteSearchCountEmpty]}>
+                    {searchQuery.trim() ? `${searchMatchCount > 0 ? activeSearchIndex + 1 : 0}/${searchMatchCount}` : "0/0"}
+                  </Text>
+                </View>
+                {replaceOpen ? (
+                  <View style={styles.searchBox}>
+                    <RefreshCw color="#64748b" size={18} />
+                    <TextInput
+                      accessibilityLabel="替换为"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onChangeText={setSearchReplacement}
+                      placeholder="替换为"
+                      placeholderTextColor="#94a3b8"
+                      style={styles.searchInput}
+                      value={searchReplacement}
+                    />
+                  </View>
+                ) : null}
+                <View style={styles.richEditorSearchActions}>
+                  <ActionButton disabled={searchMatchCount === 0} label="上一个搜索结果" onPress={() => moveEditorSearch(-1)}>
+                    <ChevronLeft color={searchMatchCount === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
+                  </ActionButton>
+                  <ActionButton disabled={searchMatchCount === 0} label="下一个搜索结果" onPress={() => moveEditorSearch(1)}>
+                    <ChevronRight color={searchMatchCount === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
+                  </ActionButton>
+                  {replaceOpen ? (
+                    <ActionButton disabled={searchMatchCount === 0} label="全部替换" onPress={replaceAllEditorMatches}>
+                      <RefreshCw color={searchMatchCount === 0 ? "#cbd5e1" : "#0f172a"} size={16} />
+                    </ActionButton>
+                  ) : null}
+                  <ActionButton label="关闭搜索" onPress={() => {
+                    setSearchOpen(false);
+                    setReplaceOpen(false);
+                    setSearchMatchCount(0);
+                    setActiveSearchIndex(0);
+                    editorRef.current?.focusEnd();
+                  }}>
+                    <X color="#0f172a" size={16} />
+                  </ActionButton>
+                </View>
+              </View>
+            ) : null}
             {draftRestored ? <Text style={styles.richEditorDraftNotice}>已恢复上次未完成的本地草稿</Text> : null}
             <View style={styles.richEditorFrame}>
               {!ready || !draftLoaded ? (
@@ -4347,6 +4469,26 @@ const RichEditorModal = ({
           }}
           visible={notebookPickerOpen}
         />
+        {memo ? (
+          <Modal animationType="fade" onRequestClose={() => setActionsOpen(false)} transparent visible={actionsOpen}>
+            <Pressable onPress={() => setActionsOpen(false)} style={styles.actionSheetBackdrop}>
+              <Pressable style={styles.actionSheet}>
+                <View style={styles.actionSheetHandle} />
+                <Text style={styles.actionSheetTitle}>笔记操作</Text>
+                <ActionSheetItem icon={<Search color="#0f172a" size={18} />} label="搜索当前笔记" onPress={() => openEditorSearch(false)} />
+                <ActionSheetItem icon={<RefreshCw color="#0f172a" size={18} />} label="替换当前笔记" onPress={() => openEditorSearch(true)} />
+                <ActionSheetItem icon={<History color="#0f172a" size={18} />} label="版本历史" onPress={() => {
+                  setActionsOpen(false);
+                  onOpenRevisions(memo);
+                }} />
+                <ActionSheetItem danger disabled={isDeleting} icon={<Trash2 color="#b91c1c" size={18} />} label={isDeleting ? "删除中" : "删除笔记"} onPress={() => {
+                  setActionsOpen(false);
+                  onDelete(memo);
+                }} />
+              </Pressable>
+            </Pressable>
+          </Modal>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );
@@ -7338,6 +7480,21 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   richStandaloneTagsInput: {
     minHeight: 30,
+  },
+  richEditorSearchPanel: {
+    borderTopColor: "#f1f5f9",
+    borderTopWidth: 1,
+    gap: 8,
+    marginHorizontal: -12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  richEditorSearchActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   richEditorLoading: {
     alignItems: "center",

@@ -15,9 +15,13 @@ type PickedImage = {
   url: string;
 };
 
+type DOMValue = Parameters<DOMImperativeFactory[string]>[0];
+
 export interface LocalTiptapEditorRef extends DOMImperativeFactory {
   flush: () => void;
   focusEnd: () => void;
+  replaceAll: (query: DOMValue, replacement: DOMValue) => void;
+  search: (query: DOMValue, index: DOMValue) => void;
 }
 
 type LocalTiptapEditorProps = {
@@ -28,12 +32,14 @@ type LocalTiptapEditorProps = {
   onLoadResource: (source: string) => Promise<string | null>;
   onPickImage: () => Promise<PickedImage | null>;
   onReady: (startupMs: number) => Promise<void>;
+  onSearchResult?: (count: number, index: number) => Promise<void>;
   ref: Ref<LocalTiptapEditorRef>;
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark";
 };
 
 const CHANGE_IDLE_MS = 500;
+const ignoreSearchResult = async () => undefined;
 
 export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
   const startedAtRef = useRef(performance.now());
@@ -42,11 +48,13 @@ export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
   const onLoadResourceRef = useRef(props.onLoadResource);
   const onPickImageRef = useRef(props.onPickImage);
   const onReadyRef = useRef(props.onReady);
+  const onSearchResultRef = useRef(props.onSearchResult ?? ignoreSearchResult);
 
   onChangeRef.current = props.onChange;
   onLoadResourceRef.current = props.onLoadResource;
   onPickImageRef.current = props.onPickImage;
   onReadyRef.current = props.onReady;
+  onSearchResultRef.current = props.onSearchResult ?? ignoreSearchResult;
   const protectedImageExtension = useMemo(
     () => createProtectedImageExtension(props.baseUrl, (source) => onLoadResourceRef.current(source)),
     [props.baseUrl]
@@ -93,13 +101,50 @@ export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
     void onChangeRef.current(normalizeImageSources(editor.getJSON() as EditorDoc, props.baseUrl));
   }, [editor, props.baseUrl]);
 
+  const search = useCallback((query: DOMValue, requestedIndex: DOMValue) => {
+    const matches = getEditorSearchMatches(editor, typeof query === "string" ? query : "");
+    const requestedMatchIndex = typeof requestedIndex === "number" ? requestedIndex : 0;
+    const index = matches.length > 0
+      ? Math.min(Math.max(requestedMatchIndex, 0), matches.length - 1)
+      : 0;
+    const match = matches[index];
+    if (editor && !editor.isDestroyed && match) {
+      editor.commands.setTextSelection({ from: match.from, to: match.to });
+    }
+    void onSearchResultRef.current(matches.length, index);
+  }, [editor]);
+
+  const replaceAll = useCallback((query: DOMValue, replacement: DOMValue) => {
+    const normalizedQuery = typeof query === "string" ? query : "";
+    const normalizedReplacement = typeof replacement === "string" ? replacement : "";
+    const matches = getEditorSearchMatches(editor, normalizedQuery);
+    if (!editor || editor.isDestroyed || matches.length === 0) {
+      void onSearchResultRef.current(0, 0);
+      return;
+    }
+    editor
+      .chain()
+      .focus()
+      .command(({ tr, dispatch }) => {
+        for (const match of [...matches].reverse()) {
+          tr.insertText(normalizedReplacement, match.from, match.to);
+        }
+        dispatch?.(tr);
+        return true;
+      })
+      .run();
+    window.requestAnimationFrame(() => search(normalizedQuery, 0));
+  }, [editor, search]);
+
   useDOMImperativeHandle(
     props.ref,
     () => ({
       flush,
       focusEnd: () => editor?.commands.focus("end"),
+      replaceAll,
+      search,
     }),
-    [editor, flush]
+    [editor, flush, replaceAll, search]
   );
 
   useEffect(() => {
@@ -171,6 +216,43 @@ const ToolbarButton = ({ active = false, icon, label, onRun }: { active?: boolea
     {icon}
   </button>
 );
+
+type EditorSearchMatch = { from: number; to: number };
+
+const getEditorSearchMatches = (editor: ReturnType<typeof useEditor>, query: string): EditorSearchMatch[] => {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!editor || editor.isDestroyed || needle.length === 0) {
+    return [];
+  }
+
+  const characters: Array<{ char: string; pos: number }> = [];
+  let previousTextEnd: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) {
+      return;
+    }
+    if (previousTextEnd !== null && pos > previousTextEnd) {
+      characters.push({ char: "\u0000", pos: -1 });
+    }
+    for (let index = 0; index < node.text.length; index += 1) {
+      characters.push({ char: node.text[index] ?? "", pos: pos + index });
+    }
+    previousTextEnd = pos + node.text.length;
+  });
+
+  const haystack = characters.map((item) => item.char).join("").toLocaleLowerCase();
+  const matches: EditorSearchMatch[] = [];
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    const start = characters[index];
+    const end = characters[index + needle.length - 1];
+    if (start && end && start.pos >= 0 && end.pos >= 0) {
+      matches.push({ from: start.pos, to: end.pos + 1 });
+    }
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return matches;
+};
 
 const EditorIcon = ({ children, size, strokeWidth }: { children: ReactNode; size: number; strokeWidth: number }) => (
   <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={strokeWidth} viewBox="0 0 24 24" width={size}>
