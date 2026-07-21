@@ -467,6 +467,8 @@ export const enUS = {
     backToList: "Back to list",
     previousMemo: "Previous note",
     nextMemo: "Next note",
+    enterFocusMode: "Enter focus mode",
+    exitFocusMode: "Exit focus mode",
     updatedAt: "Updated {{time}}",
     done: "Done",
     uploadAttachment: "Upload attachment",

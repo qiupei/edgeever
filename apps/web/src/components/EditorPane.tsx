@@ -17,6 +17,8 @@ import {
   Save,
   ReplaceAll,
   MoreHorizontal,
+  Maximize2,
+  Minimize2,
   Paperclip,
   Pencil,
   Sparkles,
@@ -451,6 +453,8 @@ const MobileNotebookSelectSheet = ({
 
 type EditorPaneProps = {
   memo: MemoDetail | null;
+  desktopFocusMode: boolean;
+  onToggleDesktopFocusMode: () => void;
   mobileDefaultEditMemoId: string | null;
   preserveUnsavedContentFromMemoId?: string | null;
   saveBlocked?: boolean;
@@ -1064,6 +1068,8 @@ export const EditorPane = (props: EditorPaneProps) => {
 
 const RichEditorPane = ({
   memo,
+  desktopFocusMode,
+  onToggleDesktopFocusMode,
   mobileDefaultEditMemoId,
   preserveUnsavedContentFromMemoId: _preserveUnsavedContentFromMemoId,
   saveBlocked: _saveBlocked = false,
@@ -1086,6 +1092,7 @@ const RichEditorPane = ({
   selectionActionBar,
   onRequestMobileNativeEdit,
 }: RichEditorPaneProps) => {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const isSelectionMode = Boolean(selectionActionBar);
   const [title, setTitle] = useState("");
@@ -2306,6 +2313,16 @@ const RichEditorPane = ({
               </button>
             </div>
             <div className="hidden items-center gap-1 lg:flex">
+              <Button
+                size="icon"
+                variant={desktopFocusMode ? "soft" : "ghost"}
+                title={t(desktopFocusMode ? "editor.exitFocusMode" : "editor.enterFocusMode")}
+                aria-label={t(desktopFocusMode ? "editor.exitFocusMode" : "editor.enterFocusMode")}
+                aria-pressed={desktopFocusMode}
+                onClick={onToggleDesktopFocusMode}
+              >
+                {desktopFocusMode ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </Button>
               <Button size="icon" variant="ghost" title="上一条笔记" aria-label="上一条笔记" onClick={onOpenPreviousMemo} disabled={!hasPreviousMemo}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -2481,7 +2498,7 @@ const RichEditorPane = ({
           </div>
         </div>
 
-        <div className="space-y-3 px-4 pb-4 pt-4 sm:px-7">
+        <div className="space-y-3 px-4 pb-4 pt-4 sm:px-7 lg:space-y-0 lg:pb-1 lg:pt-2">
           <input
             value={title}
             readOnly={effectiveReadOnly}
