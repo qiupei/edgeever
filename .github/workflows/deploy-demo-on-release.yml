@@ -15,6 +15,10 @@ concurrency:
 
 jobs:
   deploy:
+    # This is the maintainer's Demo deployment, not a default self-hosted
+    # deployment workflow. Forks and downstream repositories must configure
+    # their own deployment pipeline and credentials.
+    if: github.repository == 'tianma-if/edgeever'
     name: Build and deploy Demo Worker
     runs-on: ubuntu-latest
     timeout-minutes: 20
