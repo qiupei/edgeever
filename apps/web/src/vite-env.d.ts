@@ -12,6 +12,9 @@ interface EdgeEverDesktopBridge {
   isAvailable: boolean;
   apiBaseUrl: string;
   setApiBaseUrl(value: string): Promise<string>;
+  getSessionToken(): string;
+  setSessionToken(value: string): Promise<{ stored: boolean }>;
+  clearSessionToken(): Promise<{ stored: false }>;
   sidecarStatus(): Promise<{ available: boolean; path: string; scope: string }>;
   setAccountScope(accountId: string | null): Promise<{ ready: true; scope: string }>;
   updateStatus(): Promise<{ state: "idle" | "available" | "downloaded" }>;
@@ -20,6 +23,7 @@ interface EdgeEverDesktopBridge {
   sidecarRequest<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
   stageResource(input: { memoId: string; name: string; type: string; bytes: ArrayBuffer }): Promise<{ id: string }>;
   listStagedResources(): Promise<Array<{ id: string; memoId: string; name: string; type: string; size: number }>>;
+  remapStagedResourceMemoIds?(mappings: Array<[string, string]>): Promise<{ updated: number }>;
   readStagedResource(id: string): Promise<{ name: string; type: string; bytes: Uint8Array }>;
   removeStagedResource(id: string): Promise<void>;
   onCommand(callback: (command: string) => void): () => void;

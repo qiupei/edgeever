@@ -5,6 +5,10 @@ const workspaceSource = readFileSync(
   new URL("../apps/mobile/src/screens/WorkspaceScreen.tsx", import.meta.url),
   "utf8"
 );
+const memoDetailSource = readFileSync(
+  new URL("../apps/mobile/src/screens/WorkspaceMemoDetail.tsx", import.meta.url),
+  "utf8"
+);
 const accountSecuritySource = readFileSync(
   new URL("../apps/mobile/src/screens/AccountSecurityModal.tsx", import.meta.url),
   "utf8"
@@ -28,5 +32,13 @@ describe("mobile app scope", () => {
     for (const removedCapability of ["createUser", "listUsers", "updateUser"]) {
       expect(accountSecuritySource).not.toContain(removedCapability);
     }
+  });
+
+  test("keeps version history reachable from an active note", () => {
+    expect(memoDetailSource).toMatch(
+      /\{memo && !memo\.isDeleted \? \(\s*<Pressable\s+accessibilityLabel="版本历史"/
+    );
+    expect(memoDetailSource).toContain('syncStatus === "conflict"');
+    expect(memoDetailSource).toContain("onResolveSyncConflict");
   });
 });

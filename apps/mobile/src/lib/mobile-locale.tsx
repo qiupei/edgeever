@@ -31,6 +31,15 @@ const mobileOnlyTranslations = new Map<string, string>([
   ["输入关键词开始搜索", "Enter a keyword to search"],
   ["搜索本机同步缓存，结果会即时显示", "Search the local synced cache with instant results"],
   ["笔记操作", "Note actions"],
+  ["版本历史", "Version history"],
+  ["同步冲突", "Sync conflict"],
+  ["同步失败", "Sync failed"],
+  ["待同步", "Pending sync"],
+  ["已同步", "Synced"],
+  ["查看并处理同步冲突", "Review and resolve the sync conflict"],
+  ["云端笔记已在其他设备更新，本地修改没有覆盖云端。你可以查看版本历史，或放弃本地修改并使用云端版本。", "The cloud note was updated on another device. Your local changes did not overwrite it. View version history, or discard the local changes and use the cloud version."],
+  ["查看历史", "View history"],
+  ["使用云端版本", "Use cloud version"],
   ["加载失败", "Failed to load"],
   ["请稍后重试", "Please try again later"],
   ["重试", "Retry"],
@@ -77,6 +86,22 @@ const mobileOnlyTranslations = new Map<string, string>([
   ["最近一次本地编辑器启动", "Latest local editor startup"],
   ["暂不可用", "Unavailable"],
   ["尚未记录", "Not recorded"],
+  ["正在搜索", "Searching"],
+  ["退出搜索", "Exit search"],
+  ["重置", "Reset"],
+  ["置顶", "Pinned"],
+  ["有标签", "Tagged"],
+  ["无标签", "Untagged"],
+  ["正在同步笔记", "Syncing your notes"],
+  ["正在准备首次同步…", "Preparing your notes for the first sync…"],
+  ["正在加载笔记", "Loading notes"],
+  ["正在加载笔记本和笔记…", "Loading notebooks and notes…"],
+  ["同步已暂停", "Sync paused"],
+  ["已加载的笔记仍可使用，请检查网络后重试。", "Loaded notes remain available. Check your connection and retry."],
+  ["已选择 {{count}} 条", "{{count}} selected"],
+  ["{{count}} 条结果", "Results: {{count}}"],
+  ["筛选：{{filter}} · {{count}} 条", "Filter: {{filter}} · {{count}} notes"],
+  ["已加载 {{loaded}} / {{total}} 条笔记", "Loaded {{loaded}} of {{total}} notes"],
 ]);
 
 const flattenStrings = (value: unknown, prefix = "", output = new Map<string, string>()) => {
@@ -112,6 +137,16 @@ const translationPairs: TranslationPair[] = Array.from(zhStrings.entries())
   .sort((left, right) => right.source.length - left.source.length);
 const exactTranslations = new Map(translationPairs.filter((pair) => !pair.pattern).map((pair) => [pair.source, pair.target]));
 const templateTranslations = translationPairs.filter((pair) => pair.pattern);
+const mobileTemplateTranslations: TranslationPair[] = Array.from(mobileOnlyTranslations.entries())
+  .filter(([source]) => source.includes("{{"))
+  .map(([source, target]) => {
+    const placeholders: string[] = [];
+    const patternSource = escapeRegExp(source).replace(/\\\{\\\{(\w+)\\\}\\\}/g, (_match, placeholder: string) => {
+      placeholders.push(placeholder);
+      return "(.+?)";
+    });
+    return { source, target, pattern: new RegExp(`^${patternSource}$`), placeholders };
+  });
 
 const resolveSystemLocale = (): SupportedMobileLocale =>
   (Intl.DateTimeFormat().resolvedOptions().locale || "zh-CN").toLowerCase().startsWith("en") ? "en-US" : "zh-CN";
@@ -124,7 +159,7 @@ export const translateMobileText = (value: string, locale: SupportedMobileLocale
   if (exact) {
     return exact;
   }
-  for (const pair of templateTranslations) {
+  for (const pair of [...mobileTemplateTranslations, ...templateTranslations]) {
     const match = pair.pattern?.exec(value);
     if (!match) {
       continue;

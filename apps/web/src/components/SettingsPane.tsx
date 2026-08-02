@@ -2,6 +2,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Info,
   LayoutTemplate,
   Shield,
   SlidersHorizontal,
@@ -11,6 +12,8 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import * as m from "motion/react-m";
+import { SystemInfoDialog } from "@/components/SystemInfoDialog";
 import { Button } from "@/components/ui/button";
 import type { ShortcutSettings } from "@/lib/app-helpers";
 import { WORKSPACE_PAGE_TITLE_CLASSNAME } from "@/lib/workspace-ui";
@@ -28,6 +31,7 @@ import { SessionCard } from "./settings/SessionCard";
 import { UserManagementCard } from "./settings/UserManagementCard";
 import { ThemeToggle } from "./ThemeToggle";
 import type { AuthUser } from "@edgeever/shared";
+import { contentEnterMotion } from "@/lib/motion";
 
 interface SettingsPaneProps {
   onClose: () => void;
@@ -85,6 +89,7 @@ export const SettingsPane = ({
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>("general");
   const [activeMobileTab, setActiveMobileTab] = useState<TabKey | null>(null);
+  const [systemInfoOpen, setSystemInfoOpen] = useState(false);
 
   const tabItems: TabItem[] = [
     {
@@ -273,9 +278,9 @@ export const SettingsPane = ({
 
           {/* 右侧设置内容区 */}
           <main className="flex-1 min-w-0 overflow-y-auto pr-2">
-            <div className="grid gap-4">
+            <m.div key={activeTab} className="grid gap-4" {...contentEnterMotion}>
               {renderTabContent(activeTab)}
-            </div>
+            </m.div>
           </main>
         </div>
 
@@ -320,18 +325,35 @@ export const SettingsPane = ({
                   );
                 })}
               </div>
-              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setSystemInfoOpen(true)}
+                  className="flex min-h-16 w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-slate-600 transition-colors hover:bg-slate-200/50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70"
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50/80">
+                      <Info className="h-4 w-4 text-emerald-600" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{t("systemInfo.title")}</span>
+                      <span className="mt-0.5 block truncate text-xs text-slate-500">{t("systemInfo.description")}</span>
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                </button>
                 <FeedbackLink />
               </div>
             </div>
           ) : (
             /* 详情页面 */
-            <div className="grid gap-4">
+            <m.div key={activeMobileTab} className="grid gap-4" {...contentEnterMotion}>
               {renderTabContent(activeMobileTab)}
-            </div>
+            </m.div>
           )}
         </div>
       </div>
+      <SystemInfoDialog open={systemInfoOpen} onOpenChange={setSystemInfoOpen} />
     </div>
   );
 };
