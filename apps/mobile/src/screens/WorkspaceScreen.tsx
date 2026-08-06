@@ -83,6 +83,8 @@ import { useMobileLocale } from "../lib/mobile-locale";
 import { useSession } from "../lib/session";
 import {
   deleteMobileSyncQueueItem,
+  discardMobileMemoConflict,
+  getMobileConflictDraftClipboardText,
   listMobileSyncQueueItems,
   queueMobileMemoCreate,
   queueMobileMemoUpdate,
@@ -104,7 +106,7 @@ import { prepareUploadAsset } from "../lib/mobile-image-upload";
 import MobileWebClipCapture from "../components/MobileWebClipCapture";
 import { showEdgeEverKeyboard } from "../../modules/edgeever-keyboard";
 import LocalTiptapEditor, { type LocalTiptapEditorRef } from "../components/LocalTiptapEditor";
-import { MobileAttachmentActions } from "../components/MobileAttachmentActions";
+import { MobileResourceActions } from "../components/MobileResourceActions";
 import { resolveMobileThemeStyles, useMobileTheme } from "../lib/mobile-theme";
 import { useMobileUpdate } from "../lib/mobile-update";
 import { MobileMermaidDiagram, MobileMermaidProvider } from "../components/MobileMermaid";
@@ -148,12 +150,13 @@ import { NotesView } from "./WorkspaceNotesView";
 import { SettingsView, type MobileLocaleMode } from "./WorkspaceSettingsView";
 import { MemoDetailModal } from "./WorkspaceMemoDetail";
 import {
-  deleteMobileAttachmentFromDoc,
-  getMobileAttachmentUpdatePayload,
-  openMobileAttachment,
-  parseMobileAttachmentTargetJson,
-  renameMobileAttachmentInDoc,
-  type MobileAttachmentTarget,
+  deleteMobileResourceFromDoc,
+  getMobileResourceUpdatePayload,
+  openMobileResource,
+  parseMobileResourceTargetJson,
+  renameMobileResourceInDoc,
+  saveMobileResourceAs,
+  type MobileResourceTarget,
 } from "../lib/mobile-attachments";
 
 const ALL_NOTES_ID = "all";
@@ -902,10 +905,10 @@ export const WorkspaceScreen = ({
     ]);
   };
 
-  const handleRenameAttachment = async (memo: MemoDetail, target: MobileAttachmentTarget, filename: string) => {
+  const handleRenameResource = async (memo: MemoDetail, target: MobileResourceTarget, filename: string) => {
     if (!client) throw new Error("当前无法连接实例，请稍后重试");
     const { resource } = await client.renameResource(target.resourceId, filename);
-    const contentJson = renameMobileAttachmentInDoc(
+    const contentJson = renameMobileResourceInDoc(
       memo.contentJson,
       target,
       resource.filename || filename,
@@ -913,63 +916,82 @@ export const WorkspaceScreen = ({
     );
     await localUpdateMemoMutation.mutateAsync({
       memo,
-      payload: getMobileAttachmentUpdatePayload(contentJson),
+      payload: getMobileResourceUpdatePayload(contentJson),
     });
   };
 
-  const handleDeleteAttachment = async (memo: MemoDetail, target: MobileAttachmentTarget) => {
+  const handleDeleteResource = async (memo: MemoDetail, target: MobileResourceTarget) => {
     if (!client) throw new Error("当前无法连接实例，请稍后重试");
     await client.deleteResource(target.resourceId);
-    const contentJson = deleteMobileAttachmentFromDoc(memo.contentJson, target);
+    const contentJson = deleteMobileResourceFromDoc(memo.contentJson, target);
     await localUpdateMemoMutation.mutateAsync({
       memo,
-      payload: getMobileAttachmentUpdatePayload(contentJson),
+      payload: getMobileResourceUpdatePayload(contentJson),
     });
   };
 
-  const handleMemoSyncConflict = (memo: MemoDetail) => {
+  const handleCopyConflictDraft = useCallback(async (memo: MemoDetail) => {
+    try {
+      const text = await getMobileConflictDraftClipboardText(syncQueueScope, memo.id);
+      if (!text?.trim()) {
+        Alert.alert("复制失败", "没有可复制的本地草稿。");
+        return;
+      }
+      await Clipboard.setStringAsync(text);
+      Alert.alert("已复制", "本地草稿已复制到剪贴板。");
+    } catch (error) {
+      Alert.alert("复制失败", error instanceof Error ? error.message : "请重试");
+    }
+  }, [syncQueueScope]);
+
+  const handleAdoptCloudVersion = useCallback(async (memo: MemoDetail) => {
+    if (!client) {
+      return;
+    }
+
+    try {
+      const remoteMemo = await discardMobileMemoConflict(client, syncQueueScope, memo.id);
+      await Promise.all([
+        clearMobileMemoDraft(memo.id),
+        upsertLocalMemo(dataScope, remoteMemo),
+      ]);
+      queryClient.setQueryData(["mobile", "memo", "notebook", memo.id], { memo: remoteMemo });
+      queryClient.setQueryData(["mobile", "memo", "trash", memo.id], { memo: remoteMemo });
+      await Promise.all([
+        refreshSyncQueueItems(),
+        queryClient.invalidateQueries({ queryKey: ["mobile", "memos"] }),
+        queryClient.invalidateQueries({ queryKey: ["mobile", "search"] }),
+        queryClient.invalidateQueries({ queryKey: ["mobile", "memo", "notebook", memo.id] }),
+        queryClient.invalidateQueries({ queryKey: ["mobile", "memo", "trash", memo.id] }),
+      ]);
+    } catch (error) {
+      Alert.alert("采用云端版本失败", error instanceof Error ? error.message : "请检查网络后重试");
+    }
+  }, [client, dataScope, queryClient, refreshSyncQueueItems, syncQueueScope]);
+
+  const handleMemoSyncConflict = useCallback((memo: MemoDetail) => {
     Alert.alert(
       "同步冲突",
-      "云端笔记已在其他设备更新，本地修改没有覆盖云端。你可以查看版本历史，或放弃本地修改并使用云端版本。",
+      "云端笔记已在其他标签页、设备，或离线期间被更新，本地草稿无法直接覆盖。可先复制本地草稿，再采用云端版本后继续编辑。",
       [
         { text: "取消", style: "cancel" },
+        {
+          text: "复制本地草稿",
+          onPress: () => {
+            void handleCopyConflictDraft(memo);
+          },
+        },
         { text: "查看历史", onPress: () => setRevisionMemo(memo) },
         {
-          text: "使用云端版本",
+          text: "采用云端并重新加载",
           style: "destructive",
           onPress: () => {
-            void (async () => {
-              if (!client) {
-                return;
-              }
-
-              try {
-                const conflict = (await listMobileSyncQueueItems(syncQueueScope))
-                  .find((item) => item.memoId === memo.id && item.status === "conflict");
-                const response = await client.getMemo(memo.id);
-                if (conflict) {
-                  await deleteMobileSyncQueueItem(syncQueueScope, conflict.id);
-                }
-                await Promise.all([
-                  clearMobileMemoDraft(memo.id),
-                  upsertLocalMemo(dataScope, response.memo),
-                ]);
-                queryClient.setQueryData(["mobile", "memo", "notebook", memo.id], response);
-                queryClient.setQueryData(["mobile", "memo", "trash", memo.id], response);
-                await Promise.all([
-                  refreshSyncQueueItems(),
-                  queryClient.invalidateQueries({ queryKey: ["mobile", "memos"] }),
-                  queryClient.invalidateQueries({ queryKey: ["mobile", "search"] }),
-                ]);
-              } catch (error) {
-                Alert.alert("加载失败", error instanceof Error ? error.message : "请稍后重试");
-              }
-            })();
+            void handleAdoptCloudVersion(memo);
           },
         },
       ]
     );
-  };
+  }, [handleAdoptCloudVersion, handleCopyConflictDraft]);
 
   const handleDeleteSelection = () => {
     const permanent = memoView === "trash";
@@ -1073,10 +1095,12 @@ export const WorkspaceScreen = ({
         notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? "未分类"}
         onClose={closeDetail}
         onDelete={handleDeleteMemo}
-        onDeleteAttachment={handleDeleteAttachment}
+        onDeleteResource={handleDeleteResource}
         onRichEdit={(memo) => void openRichEditor(memo)}
         onOpenRevisions={setRevisionMemo}
-        onRenameAttachment={handleRenameAttachment}
+        onRenameResource={handleRenameResource}
+        onAdoptCloudVersion={(memo) => void handleAdoptCloudVersion(memo)}
+        onCopyLocalDraft={(memo) => void handleCopyConflictDraft(memo)}
         onResolveSyncConflict={handleMemoSyncConflict}
         onRestore={(memo) => restoreMemoMutation.mutate(memo)}
         onShare={(memo) => shareMemoMutation.mutate(memo)}
@@ -1587,7 +1611,7 @@ const CreateMemoModal = ({
   const [dirty, setDirty] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
   const [imageOperation, setImageOperation] = useState<"idle" | "creating" | "uploading">("idle");
-  const [attachmentTarget, setAttachmentTarget] = useState<MobileAttachmentTarget | null>(null);
+  const [resourceTarget, setResourceTarget] = useState<MobileResourceTarget | null>(null);
   const targetNotebookId = notebookId || fallbackNotebookId;
   const selectedNotebookName = notebooks.find((notebook) => notebook.id === targetNotebookId)?.name ?? "选择笔记本";
   const titleRef = useRef(title);
@@ -1880,26 +1904,37 @@ const CreateMemoModal = ({
     return pending;
   }, [client]);
 
-  const openAttachment = useCallback(async (target: MobileAttachmentTarget) => {
+  const downloadResource = useCallback(async (target: MobileResourceTarget) => {
     if (!client) throw new Error(resolvedLocale === "en-US" ? "The attachment client is unavailable." : "当前无法读取附件。");
-    await openMobileAttachment(client, target);
+    await openMobileResource(client, target);
   }, [client, resolvedLocale]);
 
-  const renameAttachment = useCallback(async (target: MobileAttachmentTarget, filename: string) => {
+  const saveResourceAs = useCallback(async (target: MobileResourceTarget) => {
+    if (!client) throw new Error(resolvedLocale === "en-US" ? "The resource client is unavailable." : "当前无法读取资源。");
+    const result = await saveMobileResourceAs(client, target);
+    if (result.kind === "saf") {
+      Alert.alert(
+        resolvedLocale === "en-US" ? "Downloaded" : "下载成功",
+        resolvedLocale === "en-US" ? `Saved ${result.filename}` : `已保存：${result.filename}`
+      );
+    }
+  }, [client, resolvedLocale]);
+
+  const renameResource = useCallback(async (target: MobileResourceTarget, filename: string) => {
     if (!client || !materializedMemoRef.current) throw new Error(resolvedLocale === "en-US" ? "Wait for this note to sync first." : "请等待笔记同步完成。");
     const { resource } = await client.renameResource(target.resourceId, filename);
-    editorRef.current?.renameAttachment(JSON.stringify(target), resource.filename || filename);
+    editorRef.current?.renameResource(JSON.stringify(target), resource.filename || filename);
   }, [client, resolvedLocale]);
 
-  const deleteAttachment = useCallback(async (target: MobileAttachmentTarget) => {
+  const deleteResource = useCallback(async (target: MobileResourceTarget) => {
     if (!client || !materializedMemoRef.current) throw new Error(resolvedLocale === "en-US" ? "Wait for this note to sync first." : "请等待笔记同步完成。");
     await client.deleteResource(target.resourceId);
-    editorRef.current?.removeAttachment(JSON.stringify(target));
+    editorRef.current?.removeResource(JSON.stringify(target));
   }, [client, resolvedLocale]);
 
-  const selectAttachment = useCallback(async (targetJson: string) => {
-    const target = parseMobileAttachmentTargetJson(targetJson);
-    if (target) setAttachmentTarget(target);
+  const selectResource = useCallback(async (targetJson: string) => {
+    const target = parseMobileResourceTargetJson(targetJson);
+    if (target) setResourceTarget(target);
   }, []);
 
   const editorElement = useMemo(() => draftLoaded && baseUrl ? (
@@ -1923,7 +1958,7 @@ const CreateMemoModal = ({
         flushResolverRef.current?.();
         flushResolverRef.current = null;
       }}
-      onAttachmentPress={selectAttachment}
+      onResourcePress={selectResource}
       onLoadResource={loadEditorResource}
       onPickImage={pickAndUploadImage}
       onReady={async (elapsedMs) => {
@@ -1937,7 +1972,7 @@ const CreateMemoModal = ({
       locale={resolvedLocale}
       theme={resolvedTheme}
     />
-  ) : null, [baseUrl, draftLoaded, loadEditorResource, resolvedLocale, resolvedTheme, selectAttachment]);
+  ) : null, [baseUrl, draftLoaded, loadEditorResource, resolvedLocale, resolvedTheme, selectResource]);
 
   return (
     <Modal animationType="slide" onRequestClose={() => void requestClose()} presentationStyle="fullScreen" visible={visible}>
@@ -2019,13 +2054,14 @@ const CreateMemoModal = ({
           }}
           visible={notebookPickerOpen}
         />
-        <MobileAttachmentActions
+        <MobileResourceActions
           canMutate={Boolean(materializedMemoRef.current)}
-          onClose={() => setAttachmentTarget(null)}
-          onDelete={deleteAttachment}
-          onOpen={openAttachment}
-          onRename={renameAttachment}
-          target={attachmentTarget}
+          onClose={() => setResourceTarget(null)}
+          onDelete={deleteResource}
+          onDownload={downloadResource}
+          onRename={renameResource}
+          onSaveAs={saveResourceAs}
+          target={resourceTarget}
         />
       </SafeAreaView>
     </Modal>
@@ -2231,7 +2267,7 @@ const RichEditorModal = ({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [startupMs, setStartupMs] = useState<number | null>(null);
-  const [attachmentTarget, setAttachmentTarget] = useState<MobileAttachmentTarget | null>(null);
+  const [resourceTarget, setResourceTarget] = useState<MobileResourceTarget | null>(null);
   const notebookLabel = notebooks.find((notebook) => notebook.id === notebookId)?.name ?? "未分类";
   const saveLabel = error ? "保存失败" : saving ? "保存中" : uploading ? "上传中" : dirty ? (draftRestored ? "本地草稿" : "未保存") : ready ? "已保存" : "加载中";
   const titleRef = useRef(title);
@@ -2420,26 +2456,37 @@ const RichEditorModal = ({
     return pending;
   }, [client]);
 
-  const openAttachment = useCallback(async (target: MobileAttachmentTarget) => {
+  const downloadResource = useCallback(async (target: MobileResourceTarget) => {
     if (!client) throw new Error(resolvedLocale === "en-US" ? "The attachment client is unavailable." : "当前无法读取附件。");
-    await openMobileAttachment(client, target);
+    await openMobileResource(client, target);
   }, [client, resolvedLocale]);
 
-  const renameAttachment = useCallback(async (target: MobileAttachmentTarget, filename: string) => {
+  const saveResourceAs = useCallback(async (target: MobileResourceTarget) => {
+    if (!client) throw new Error(resolvedLocale === "en-US" ? "The resource client is unavailable." : "当前无法读取资源。");
+    const result = await saveMobileResourceAs(client, target);
+    if (result.kind === "saf") {
+      Alert.alert(
+        resolvedLocale === "en-US" ? "Downloaded" : "下载成功",
+        resolvedLocale === "en-US" ? `Saved ${result.filename}` : `已保存：${result.filename}`
+      );
+    }
+  }, [client, resolvedLocale]);
+
+  const renameResource = useCallback(async (target: MobileResourceTarget, filename: string) => {
     if (!client || !memo || memo.id.startsWith("local:")) throw new Error(resolvedLocale === "en-US" ? "Wait for this note to sync first." : "请等待笔记同步完成。");
     const { resource } = await client.renameResource(target.resourceId, filename);
-    editorRef.current?.renameAttachment(JSON.stringify(target), resource.filename || filename);
+    editorRef.current?.renameResource(JSON.stringify(target), resource.filename || filename);
   }, [client, memo, resolvedLocale]);
 
-  const deleteAttachment = useCallback(async (target: MobileAttachmentTarget) => {
+  const deleteResource = useCallback(async (target: MobileResourceTarget) => {
     if (!client || !memo || memo.id.startsWith("local:")) throw new Error(resolvedLocale === "en-US" ? "Wait for this note to sync first." : "请等待笔记同步完成。");
     await client.deleteResource(target.resourceId);
-    editorRef.current?.removeAttachment(JSON.stringify(target));
+    editorRef.current?.removeResource(JSON.stringify(target));
   }, [client, memo, resolvedLocale]);
 
-  const selectAttachment = useCallback(async (targetJson: string) => {
-    const target = parseMobileAttachmentTargetJson(targetJson);
-    if (target) setAttachmentTarget(target);
+  const selectResource = useCallback(async (targetJson: string) => {
+    const target = parseMobileResourceTargetJson(targetJson);
+    if (target) setResourceTarget(target);
   }, []);
 
   const editorElement = useMemo(
@@ -2456,7 +2503,7 @@ const RichEditorModal = ({
           style: styles.richEditorWebView,
         }}
         onChange={persistDraft}
-        onAttachmentPress={selectAttachment}
+        onResourcePress={selectResource}
         onLoadResource={loadEditorResource}
         onPickImage={pickAndUploadImage}
         onReady={async (elapsedMs) => {
@@ -2479,7 +2526,7 @@ const RichEditorModal = ({
         theme={resolvedTheme}
       />
     ) : null,
-    [baseUrl, loadEditorResource, memo?.id, resolvedLocale, resolvedTheme, selectAttachment]
+    [baseUrl, loadEditorResource, memo?.id, resolvedLocale, resolvedTheme, selectResource]
   );
 
   useEffect(() => {
@@ -2591,13 +2638,14 @@ const RichEditorModal = ({
           }}
           visible={notebookPickerOpen}
         />
-        <MobileAttachmentActions
+        <MobileResourceActions
           canMutate={Boolean(memo && !memo.id.startsWith("local:"))}
-          onClose={() => setAttachmentTarget(null)}
-          onDelete={deleteAttachment}
-          onOpen={openAttachment}
-          onRename={renameAttachment}
-          target={attachmentTarget}
+          onClose={() => setResourceTarget(null)}
+          onDelete={deleteResource}
+          onDownload={downloadResource}
+          onRename={renameResource}
+          onSaveAs={saveResourceAs}
+          target={resourceTarget}
         />
     </SafeAreaView>
   );
