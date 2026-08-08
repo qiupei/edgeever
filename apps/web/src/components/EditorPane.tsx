@@ -91,6 +91,7 @@ import {
   docToMarkdown,
   MEMO_CONTENT_STYLE,
   markdownToDoc,
+  MergeDivider,
   resolveMemoContentDoc,
   type Notebook,
   type MemoDetail,
@@ -136,7 +137,13 @@ import { RELEASE_STATUS_EVENT } from "@/lib/release-notice";
 import { downloadMarkdownFile } from "@/lib/note-markdown-export";
 import { openNotePrintPreview, serializeNoteDocumentForPrint } from "@/lib/note-print";
 import { isBrowserOffline } from "@/lib/network-status";
-import { shouldOpenEditorLink } from "@/lib/editor-link-click";
+import {
+  EDITOR_LINK_OPEN_MODE_CHANGED_EVENT,
+  getStoredEditorLinkOpenMode,
+  resolveEditorLinkRequireModifier,
+  shouldOpenEditorLink,
+  type EditorLinkOpenMode,
+} from "@/lib/editor-link-click";
 import {
   formatMarkdownLink,
   insertMarkdownSnippet,
@@ -224,6 +231,20 @@ const getNoteLinkFromEventTarget = (target: EventTarget | null) =>
   target instanceof Element
     ? target.closest<HTMLAnchorElement>('a.edgeever-note-link, a[href^="#memo="]')
     : null;
+
+/** Any navigable editor link (external or note). Attachment chips have their own menu. */
+const getEditorNavigableLinkFromEventTarget = (target: EventTarget | null) => {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const link = target.closest<HTMLAnchorElement>("a[href]");
+  if (!link || getAttachmentLinkFromEventTarget(link)) {
+    return null;
+  }
+
+  return link;
+};
 
 const getNoteLinkHintPosition = (link: HTMLAnchorElement): NoteLinkHintPosition => {
   const rect = link.getBoundingClientRect();
@@ -923,6 +944,27 @@ const RichEditorPane = ({
     () => typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform) ? "⌘" : "Ctrl",
     []
   );
+  const [editorLinkOpenMode, setEditorLinkOpenMode] = useState<EditorLinkOpenMode>(() =>
+    getStoredEditorLinkOpenMode()
+  );
+
+  useEffect(() => {
+    const syncMode = () => setEditorLinkOpenMode(getStoredEditorLinkOpenMode());
+    const onPreferenceChanged = (event: Event) => {
+      const detail = (event as CustomEvent<EditorLinkOpenMode>).detail;
+      if (detail === "click" || detail === "modifier") {
+        setEditorLinkOpenMode(detail);
+        return;
+      }
+      syncMode();
+    };
+    window.addEventListener(EDITOR_LINK_OPEN_MODE_CHANGED_EVENT, onPreferenceChanged);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(EDITOR_LINK_OPEN_MODE_CHANGED_EVENT, onPreferenceChanged);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
   const noteLinkResultsQuery = useQuery({
     queryKey: ["memo-link-search", noteLinkQuery],
     queryFn: () => repository.listMemos({ q: noteLinkQuery, limit: 20 }),
@@ -1205,6 +1247,7 @@ const RichEditorPane = ({
         link: { openOnClick: false },
       }),
       EdgeEverCodeBlock.configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
+      MergeDivider,
       ThemeBlock,
       ResizableImage.configure({
         allowBase64: false,
@@ -1264,7 +1307,20 @@ const RichEditorPane = ({
       },
       handleClick: (_view, _pos, event) => {
         const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
-        if (!target || !shouldOpenEditorLink(event, _view.editable)) {
+        if (!target) {
+          return false;
+        }
+
+        // Attachment chips use the resource action menu — never treat as a plain hyperlink open.
+        if (getAttachmentLinkFromEventTarget(target)) {
+          return false;
+        }
+
+        // Read preference/viewport at click time so settings changes apply without remounting the editor.
+        const isMobile =
+          typeof window !== "undefined" && window.matchMedia(MOBILE_EDITOR_QUERY).matches;
+        const requireModifier = resolveEditorLinkRequireModifier(isMobile);
+        if (!shouldOpenEditorLink(event, _view.editable, { requireModifier })) {
           return false;
         }
 
@@ -1530,21 +1586,24 @@ const RichEditorPane = ({
     return true;
   }, [cancelResourceMenuHide, isMobileViewport]);
 
-  const showNoteLinkHint = useCallback((target: EventTarget | null) => {
-    if (!editor?.isEditable || isMobileViewport) {
+  const showEditorLinkOpenHint = useCallback((target: EventTarget | null) => {
+    // Tip only when desktop + "require modifier" preference is on (default click-to-open needs no tip).
+    if (!editor?.isEditable || isMobileViewport || editorLinkOpenMode !== "modifier") {
       return;
     }
 
-    const link = getNoteLinkFromEventTarget(target);
+    const link = getEditorNavigableLinkFromEventTarget(target);
     if (link) {
       setNoteLinkHintPosition(getNoteLinkHintPosition(link));
+    } else {
+      setNoteLinkHintPosition(null);
     }
-  }, [editor?.isEditable, isMobileViewport]);
+  }, [editor?.isEditable, editorLinkOpenMode, isMobileViewport]);
 
   const handleEditorMouseOver = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     if (showAttachmentMenu(event.target)) return;
-    showNoteLinkHint(event.target);
-  }, [showAttachmentMenu, showNoteLinkHint]);
+    showEditorLinkOpenHint(event.target);
+  }, [showAttachmentMenu, showEditorLinkOpenHint]);
 
   const handleEditorMouseOut = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const attachmentLink = getAttachmentLinkFromEventTarget(event.target);
@@ -1561,7 +1620,7 @@ const RichEditorPane = ({
       return;
     }
 
-    const link = getNoteLinkFromEventTarget(event.target);
+    const link = getEditorNavigableLinkFromEventTarget(event.target);
     if (!link || (event.relatedTarget instanceof Node && link.contains(event.relatedTarget))) {
       return;
     }
@@ -1570,20 +1629,26 @@ const RichEditorPane = ({
 
   const handleEditorClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     if (event.button === 0 && !event.ctrlKey && !event.metaKey) {
-      showNoteLinkHint(event.target);
+      showEditorLinkOpenHint(event.target);
     }
-  }, [showNoteLinkHint]);
+  }, [showEditorLinkOpenHint]);
 
   const handleEditorFocusCapture = useCallback((event: ReactFocusEvent<HTMLDivElement>) => {
     if (showAttachmentMenu(event.target)) return;
-    showNoteLinkHint(event.target);
-  }, [showAttachmentMenu, showNoteLinkHint]);
+    showEditorLinkOpenHint(event.target);
+  }, [showAttachmentMenu, showEditorLinkOpenHint]);
 
   const handleEditorBlurCapture = useCallback((event: ReactFocusEvent<HTMLDivElement>) => {
-    if (!getNoteLinkFromEventTarget(event.relatedTarget)) {
+    if (!getEditorNavigableLinkFromEventTarget(event.relatedTarget)) {
       setNoteLinkHintPosition(null);
     }
   }, []);
+
+  useEffect(() => {
+    if (editorLinkOpenMode !== "modifier") {
+      setNoteLinkHintPosition(null);
+    }
+  }, [editorLinkOpenMode]);
 
   useEffect(() => {
     if (!noteLinkHintPosition) {
@@ -3951,7 +4016,12 @@ const RichEditorPane = ({
         } as CSSProperties}
         className={cn(
           "edgeever-editor relative min-h-0 flex-1 bg-white",
-          useMobilePlainTextEditor ? "overflow-visible" : "overflow-y-auto"
+          useMobilePlainTextEditor
+            ? "overflow-visible"
+            : useMarkdownSourceEditor
+              // Source mode: fill the pane and scroll inside the textarea (not a 300px card).
+              ? "flex flex-col overflow-hidden"
+              : "overflow-y-auto"
         )}
       >
         {editorTheme !== "default" &&
@@ -3968,7 +4038,10 @@ const RichEditorPane = ({
           )}
         <div
           className={cn(
-            "flex min-h-full items-start gap-8 px-6 py-6 sm:px-10 transition-all duration-200",
+            "flex gap-8 transition-all duration-200",
+            useMarkdownSourceEditor
+              ? "h-full min-h-0 flex-1 items-stretch px-0 py-0"
+              : "min-h-full items-start px-6 py-6 sm:px-10",
             desktopFocusMode
               ? "mx-auto w-full max-w-[1400px] justify-center"
               : "w-full justify-start"
@@ -3977,13 +4050,20 @@ const RichEditorPane = ({
           <div
             className={cn(
               "min-w-0 flex-1 transition-[max-width] duration-200",
+              useMarkdownSourceEditor && "flex h-full min-h-0 flex-col",
               desktopFocusMode
                 ? "max-w-[960px]"
                 : "max-w-none"
             )}
-            style={!desktopFocusMode ? {
-              maxWidth: editorOutlineCollapsed ? EDITOR_CONTENT_MAX_WIDTH_COLLAPSED : EDITOR_CONTENT_MAX_WIDTH,
-            } : undefined}
+            style={
+              !desktopFocusMode && !useMarkdownSourceEditor
+                ? {
+                    maxWidth: editorOutlineCollapsed
+                      ? EDITOR_CONTENT_MAX_WIDTH_COLLAPSED
+                      : EDITOR_CONTENT_MAX_WIDTH,
+                  }
+                : undefined
+            }
           >
             {useMobilePlainTextEditor ? (
               <>
@@ -4023,22 +4103,25 @@ const RichEditorPane = ({
                 </div>
               </>
             ) : useMarkdownSourceEditor ? (
-              <textarea
-                ref={markdownTextAreaRef}
-                value={markdownSource}
-                onChange={(event) => handleMarkdownSourceChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
-                    event.preventDefault();
-                    openExternalLinkDialog();
-                  }
-                }}
-                readOnly={effectiveReadOnly}
-                spellCheck={false}
-                aria-label={t("editor.markdownSourceAria")}
-                className="block min-h-[300px] h-full w-full resize-none border-0 bg-slate-950 px-4 py-3 font-mono text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500 sm:px-7"
-                placeholder={`# ${t("editor.placeholder")}`}
-              />
+              // Absolute fill: native <textarea> often ignores flex-1 height; pin to the pane instead.
+              <div className="relative min-h-0 flex-1">
+                <textarea
+                  ref={markdownTextAreaRef}
+                  value={markdownSource}
+                  onChange={(event) => handleMarkdownSourceChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+                      event.preventDefault();
+                      openExternalLinkDialog();
+                    }
+                  }}
+                  readOnly={effectiveReadOnly}
+                  spellCheck={false}
+                  aria-label={t("editor.markdownSourceAria")}
+                  className="absolute inset-0 h-full w-full resize-none border-0 bg-slate-950 px-4 py-3 font-mono text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500 sm:px-6"
+                  placeholder={`# ${t("editor.placeholder")}`}
+                />
+              </div>
             ) : (
               <div
                 onMouseOver={handleEditorMouseOver}

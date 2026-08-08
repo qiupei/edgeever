@@ -174,6 +174,9 @@ export const enUS = {
     imageCompressionTitle: "Compress note images",
     imageCompressionDescription: "Compress large images locally before upload to reduce storage use.",
     imageCompressionAria: "Compress note images",
+    linkOpenModifierTitle: "Open links with Ctrl/⌘ + click while editing",
+    linkOpenModifierDescription: "When on, hold Ctrl/⌘ and click to open; off (default) opens on a single click. Desktop only.",
+    linkOpenModifierAria: "Require Ctrl or ⌘ click to open links while editing",
     syncIntervalTitle: "Automatic sync interval",
     syncIntervalDescription: "Sync edits to the server automatically while keeping local drafts available immediately.",
     syncIntervals: { "30s": "Every 30 seconds", "5m": "Every 5 minutes", "15m": "Every 15 minutes", "30m": "Every 30 minutes", "1h": "Every hour", "2h": "Every 2 hours" },
@@ -840,7 +843,7 @@ export const enUS = {
     empty: "No notes found",
     loading: "Searching notes...",
     close: "Close note picker",
-    openHint: "Hold {{modifier}} and click to open this note",
+    openHint: "Hold {{modifier}} and click to open the link",
   },
   mobileNotebookPicker: {
     title: "Switch notebook",
