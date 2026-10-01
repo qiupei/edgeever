@@ -351,7 +351,7 @@ function AiSidebarThreadMenu({
 
 const readLocalAdapter = (): { id: DesktopAcpAdapterId; path?: string } | null => {
   const id = readStorage(AI_SIDEBAR_ADAPTER_KEY);
-  if (id !== "codex" && id !== "antigravity" && id !== "grokBuild" && id !== "deepseekHarness" && id !== "piAgent" && id !== "workbuddyCn" && id !== "workbuddyIntl") return null;
+  if (id !== "codex" && id !== "claudeCode" && id !== "antigravity" && id !== "openClaw" && id !== "hermesAgent" && id !== "grokBuild" && id !== "deepseekHarness" && id !== "piAgent" && id !== "workbuddyCn" && id !== "workbuddyIntl") return null;
   const path = readStorage(AI_SIDEBAR_ADAPTER_PATH_KEY)?.trim();
   return id === "antigravity" && path ? { id, path } : { id };
 };
@@ -980,7 +980,9 @@ function AiSidebarSession({
       setLocalTurns((previous) => previous.map((turn) => turn.id === turnId && turn.status === "running"
         ? { ...turn, status: event.type === "error" ? "failed" : "completed" }
         : turn));
-      if (event.type === "error" && event.message) setError(event.message);
+      if (event.type === "error" && event.message) {
+        setError(event.message === "note_access_unavailable" ? t("aiAssistant.sidebar.noteAccessUnavailable") : event.message);
+      }
       if (active.current?.requestId === event.requestId) {
         active.current = null;
         locked.current = false;
@@ -1528,8 +1530,9 @@ function AiSidebarSession({
                   {localAdapterId ? t(`aiAssistant.agentSource.${localAdapterId}`) : t("aiAssistant.sidebar.localStatus")}
                 </span>
               </TooltipTrigger>
-              <TooltipContent>
-                {localAdapterId ? t(`aiAssistant.agentSource.${localAdapterId}`) : t("aiAssistant.sidebar.localStatus")}
+              <TooltipContent className="max-w-xs">
+                <p>{localAdapterId ? t(`aiAssistant.agentSource.${localAdapterId}`) : t("aiAssistant.sidebar.localStatus")}</p>
+                <p className="mt-1">{t("aiAssistant.agentSource.localHint")}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
