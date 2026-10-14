@@ -67,7 +67,15 @@ export const NotebookTreeItem = ({
 }) => {
   const { t } = useTranslation();
   const [shareOpen, setShareOpen] = useState(false);
-  const publicNotebook = inheritedPublic || Boolean(sharedNotebookIds?.has(node.id));
+  const directlyShared = Boolean(sharedNotebookIds?.has(node.id));
+  const publicNotebook = inheritedPublic || directlyShared;
+  const shareActionLabel = t(
+    directlyShared
+      ? "sharing.manage"
+      : inheritedPublic
+        ? "sharing.notebookInheritedAction"
+        : "sharing.notebookTitle",
+  );
   const open = !collapsedNotebookIds.has(node.id);
   const hasChildren = node.children.length > 0;
   const showsSplitCount = !showDescendantNotes && hasChildren;
@@ -233,7 +241,6 @@ export const NotebookTreeItem = ({
             ) : (
               <span className="h-6 w-5 shrink-0" aria-hidden="true" />
             )}
-            <TooltipProvider><Tooltip><TooltipTrigger asChild>
               <button
                 data-notebook-tree-button
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -286,7 +293,13 @@ export const NotebookTreeItem = ({
                 >
                   {node.name}
                 </span>
-                {publicNotebook ? <Globe className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-slate-700" : "text-slate-500")} aria-label={t("sharing.notebookPublic")} /> : null}
+                {publicNotebook ? (
+                  <Globe
+                    className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-slate-700" : "text-slate-500")}
+                    role="img"
+                    aria-label={t("sharing.notebookPublic")}
+                  />
+                ) : null}
                 <span
                   className={cn(
                     "shrink-0 tabular-nums text-xs font-normal transition-colors duration-200",
@@ -297,7 +310,6 @@ export const NotebookTreeItem = ({
                   {formatNotebookMemoCount({ directCount: node.directMemoCount, totalCount: node.memoCount, hasChildren }, showDescendantNotes)}
                 </span>
               </button>
-            </TooltipTrigger><TooltipContent>{publicNotebook ? t("sharing.notebookPublic") : node.name}</TooltipContent></Tooltip></TooltipProvider>
             <div ref={actionsRef} className="relative shrink-0">
                 <TooltipProvider><Tooltip><TooltipTrigger asChild>
                   <button
@@ -347,7 +359,7 @@ export const NotebookTreeItem = ({
                     type="button"
                     onClick={event => { event.stopPropagation(); setActionsOpen(false); setShareOpen(true); }}
                   >
-                    <Share2 className="h-4 w-4" />{t("sharing.notebookTitle")}
+                    <Share2 className="h-4 w-4" />{shareActionLabel}
                   </button>
                 {isInbox ? (
                   <>
@@ -412,7 +424,7 @@ export const NotebookTreeItem = ({
             {t("notebookTree.rename")}
           </ContextMenuItem>
           <ContextMenuItem className="flex h-9 items-center gap-2 px-3 text-xs cursor-pointer" onClick={() => setShareOpen(true)}>
-            <Share2 className="h-4 w-4" />{t("sharing.notebookTitle")}
+            <Share2 className="h-4 w-4" />{shareActionLabel}
           </ContextMenuItem>
           {isInbox ? (
             <>
